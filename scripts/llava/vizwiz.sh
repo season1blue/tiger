@@ -5,9 +5,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
 
-model="Qwen-VL-Chat"
+model="llava-v1.5-7b"
 method="memvr"
-python -m qwen.eval.qwen_eval \
+python -m llava.eval.llava_model_vqa_loader \
     --model-path $model \
     --question-file ./playground/data/eval/vizwiz/llava_test.jsonl \
     --image-folder ./playground/data/eval/vizwiz/test \
@@ -18,10 +18,10 @@ python -m qwen.eval.qwen_eval \
     --retracing-ratio 0.28 \
     --entropy-threshold 0.75 \
     --max-new-tokens 1024 \
-    --starting-layer 9 \
+    --starting-layer 5 \
     --ending-layer 16 \
 
-python "$ROOT_DIR/scripts/convert_vizwiz_for_submission.py" \
+python "$ROOT_DIR/utils/convert_vizwiz_for_submission.py" \
     --annotation-file ./playground/data/eval/vizwiz/llava_test.jsonl \
     --result-file ./playground/data/eval/vizwiz/answers/$model/${method}.jsonl \
     --result-upload-file ./playground/data/eval/vizwiz/answers_upload/$model/${method}.json

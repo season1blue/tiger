@@ -10,7 +10,7 @@ method='memvr'
 QUESTION_JSON="/data/ssz/Datasets/mmvet/mm-vet.json"
 QUESTION_JSONL="/data/ssz/Datasets/mmvet/mm-vet.jsonl"
 
-python "$ROOT_DIR/eval_scripts/llava/prepare_mmvet_questions.py" \
+python "$ROOT_DIR/scripts/llava/prepare_mmvet_questions.py" \
     --src "$QUESTION_JSON" \
     --dst "$QUESTION_JSONL"
 
@@ -29,6 +29,6 @@ python -m qwen.eval.qwen_eval \
     --ending-layer 16 \
 
 mkdir -p /data/ssz/Datasets/mmvet/results/$model
-python "$ROOT_DIR/scripts/convert_mmvet_for_eval.py" \
+python "$ROOT_DIR/utils/convert_mmvet_for_eval.py" \
     --src /data/ssz/Datasets/mmvet/answers/$model/${method}.jsonl \
     --dst /data/ssz/Datasets/mmvet/results/$model/${method}.json \

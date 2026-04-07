@@ -8,13 +8,13 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
 
 # Usage:
-#   bash eval_scripts/qwen/mme.sh          # default: memvr
-#   bash eval_scripts/qwen/mme.sh memvr    # enable MemVR
-#   bash eval_scripts/qwen/mme.sh none     # disable MemVR
+#   bash scripts/qwen/mme.sh          # default: memvr
+#   bash scripts/qwen/mme.sh memvr    # enable MemVR
+#   bash scripts/qwen/mme.sh none     # disable MemVR
 MODE="${1:-memvr}"
 if [[ "$MODE" != "memvr" && "$MODE" != "none" ]]; then
     echo "Invalid mode: $MODE"
-    echo "Usage: bash eval_scripts/qwen/mme.sh [memvr|none]"
+    echo "Usage: bash scripts/qwen/mme.sh [memvr|none]"
     exit 1
 fi
 
@@ -29,7 +29,7 @@ fi
 echo "[MME] mode=$MODE"
 echo "[MME] answers_file=$ANSWERS_FILE"
 
-python -m qwen.eval.qwen_eval \
+python -m qwen.qwen_eval \
     --model-path /data/ssz/llms/Qwen-VL-Chat \
     --question-file "$MME_ROOT/llava_mme.jsonl" \
     --image-folder "$MME_ROOT/MME_Benchmark_release_version" \

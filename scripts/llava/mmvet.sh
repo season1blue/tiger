@@ -32,6 +32,6 @@ python -m llava.eval.llava_model_vqa \
     --ending-layer 16
 
 mkdir -p "$MMVET_ROOT/results/$model"
-python "$ROOT_DIR/scripts/convert_mmvet_for_eval.py" \
+python "$ROOT_DIR/utils/convert_mmvet_for_eval.py" \
     --src "$MMVET_ROOT/answers/$model/${method}.jsonl" \
     --dst "$MMVET_ROOT/results/$model/${method}.json"
