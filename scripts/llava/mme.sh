@@ -16,12 +16,12 @@ python -m llava.eval.llava_model_vqa_loader \
     --answers-file "$MME_ROOT/answers/llava-v1.5-7b/memvr.jsonl" \
     --temperature 0 \
     --cuda-device 'cuda:0' \
-    --apply-memvr 'none' \
+    --apply-memvr 'memvr' \
     --retracing-ratio 0.12 \
     --entropy-threshold 0.75 \
     --max-new-tokens 1 \
     --starting-layer 5 \
-    --ending-layer 16 
+    --ending-layer 32
 
 cd "$MME_ROOT"
 python "$MME_ROOT/convert_answer_to_mme.py" --experiment "$EXPERIMENT"

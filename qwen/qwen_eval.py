@@ -76,7 +76,7 @@ def run_qa_eval(args, model_name, tokenizer, model):
             image_path = os.path.join(args.image_folder, image_name)
 
             with torch.inference_mode():
-                query = f"<img>{image_path}</img>\\n{prompt}"
+                query = f"<img>{image_path}</img>\n{prompt}"
                 output, _ = model.chat(
                     tokenizer,
                     query=query,
@@ -97,7 +97,7 @@ def run_qa_eval(args, model_name, tokenizer, model):
                         "metadata": {},
                     }
                 )
-                + "\\n"
+                + "\n"
             )
 
 
@@ -124,7 +124,7 @@ def run_chair_eval(args, tokenizer, model):
             assert img_info["name"] == img_file
 
             image_path = os.path.join(args.image_folder, img_file)
-            query = f"<img>{image_path}</img>\\nPlease describe this image in detail."
+            query = f"<img>{image_path}</img>\nPlease describe this image in detail."
 
             with torch.inference_mode():
                 output, _ = model.chat(
@@ -136,7 +136,7 @@ def run_chair_eval(args, tokenizer, model):
                     max_new_tokens=args.max_new_tokens,
                 )
 
-            out_f.write(json.dumps({"image_id": img_id, "caption": output}) + "\\n")
+            out_f.write(json.dumps({"image_id": img_id, "caption": output}) + "\n")
 
 
 def build_parser():
