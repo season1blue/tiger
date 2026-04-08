@@ -39,7 +39,6 @@ from llava.mm_utils import get_anyres_image_grid_shape
 from llava.model.llava_arch import unpad_image
 
 import llava.model.llava_arch
-import ipdb
 logger = logging.get_logger(__name__)
 
 
@@ -841,10 +840,7 @@ def qwen_model_forward(
         hidden_states=all_hidden_states,
         attentions=all_self_attns,
     )
-
-
-
-
+    
 def apply_memvr_llama(
         self,
         starting_layer: int,
@@ -877,7 +873,6 @@ def apply_memvr_qwen(
     if hasattr(qwen_module, "QWenModel"):
         qwen_module.QWenModel.forward = qwen_model_forward
     
-    ipdb.set_trace()
     
     # Also patch currently-instantiated runtime classes so existing model objects take effect immediately.
     type(self.transformer).forward = qwen_model_forward
@@ -898,6 +893,33 @@ def apply_memvr_qwen(
     num_layers = len(self.transformer.h)
     for layer in range(num_layers):
         mlp = self.transformer.h[layer].mlp
+        mlp.apply_memvr = True
+        mlp.starting_layer = starting_layer
+        mlp.ending_layer = ending_layer
+        mlp.entropy_threshold = entropy_threshold
+        mlp.retracing_ratio = retracing_ratio
+        mlp.vision_retracing_method = "adapt"
+        mlp.vision_retracing_sign = False
+        mlp.vision_retracing_event = False
+        mlp.vision_token = None
+        mlp.adpt_sign = 0
+        mlp.adpt_w1 = None
+        mlp.adpt_w2 = None
+
+
+def apply_memvr_qwen25(
+        self,
+        starting_layer: int,
+        ending_layer: int,
+        entropy_threshold: float,
+        retracing_ratio: float
+    ):
+    # Qwen2.5-VL MemVR logic is directly implemented in modeling_qwen2_5_vl.py.
+    self.model.language_model.lm_head = self.lm_head
+
+    num_layers = len(self.model.language_model.layers)
+    for layer in range(num_layers):
+        mlp = self.model.language_model.layers[layer].mlp
         mlp.apply_memvr = True
         mlp.starting_layer = starting_layer
         mlp.ending_layer = ending_layer

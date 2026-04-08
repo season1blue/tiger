@@ -79,6 +79,7 @@ def create_data_loader(questions, image_folder, tokenizer, image_processor, mode
     data_loader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False, collate_fn=collate_fn)
     return data_loader
 
+import ipdb
 
 def eval_model(args):
     device= args.cuda_device
@@ -108,6 +109,7 @@ def eval_model(args):
     if args.apply_memvr == 'memvr':
         # print("xx")
         # exit()
+        
         apply_memvr_llama(
             self=model,
             starting_layer=args.starting_layer,
