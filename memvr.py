@@ -3,6 +3,7 @@ import math
 import warnings
 from typing import List, Optional, Tuple, Union
 import safetensors
+import importlib
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -38,7 +39,7 @@ from llava.mm_utils import get_anyres_image_grid_shape
 from llava.model.llava_arch import unpad_image
 
 import llava.model.llava_arch
-
+import ipdb
 logger = logging.get_logger(__name__)
 
 
@@ -114,336 +115,6 @@ class LlamaMLP(nn.Module):
 
         return down_proj
 
-
-def qwen_mlp_forward(self, hidden_states):
-    a1 = self.w1(hidden_states)
-    a2 = self.w2(hidden_states)
-    intermediate_parallel = a1 * F.silu(a2)
-    output = self.c_proj(intermediate_parallel)
-
-    if getattr(self, "adpt_sign", 0) == 1:
-        adpt_w1 = getattr(self, "adpt_w1", None)
-        adpt_w2 = getattr(self, "adpt_w2", None)
-        if adpt_w1 is not None and adpt_w2 is not None:
-            adapter_source = hidden_states[0] if hidden_states.dim() == 3 else hidden_states
-            if adapter_source.dim() == 1:
-                adapter_source = adapter_source.unsqueeze(0)
-            if adpt_w1.dim() == 3:
-                adpt_w1 = adpt_w1[0]
-            if adpt_w2.dim() == 3:
-                adpt_w2 = adpt_w2[0]
-
-            adapter_out = torch.matmul(F.silu(torch.matmul(adapter_source, adpt_w1.T)), adpt_w2.T)
-            if hidden_states.dim() == 3 and adapter_out.dim() == 2:
-                adapter_out = adapter_out.unsqueeze(0)
-
-            eps = 1e-6
-            norm_scale = torch.mean(torch.abs(output)) / (torch.mean(torch.abs(adapter_out)) + eps)
-            retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
-            return output * (1 - retracing_ratio) + norm_scale * adapter_out * retracing_ratio
-
-    return output
-
-def qwen_model_forward(
-    self,
-    input_ids: Optional[torch.LongTensor] = None,
-    past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-    attention_mask: Optional[torch.FloatTensor] = None,
-    token_type_ids: Optional[torch.LongTensor] = None,
-    position_ids: Optional[torch.LongTensor] = None,
-    head_mask: Optional[torch.FloatTensor] = None,
-    inputs_embeds: Optional[torch.FloatTensor] = None,
-    encoder_hidden_states: Optional[torch.Tensor] = None,
-    encoder_attention_mask: Optional[torch.FloatTensor] = None,
-    use_cache: Optional[bool] = None,
-    output_attentions: Optional[bool] = None,
-    output_hidden_states: Optional[bool] = None,
-    return_dict: Optional[bool] = None,
-    logits_processor=LogitsProcessorList(),
-):
-    visual_config = getattr(self.config, "visual", None)
-    image_start_id = None
-    if isinstance(visual_config, dict):
-        image_start_id = visual_config.get("image_start_id")
-    elif visual_config is not None:
-        image_start_id = getattr(visual_config, "image_start_id", None)
-
-    if (
-        past_key_values is None
-        and input_ids is not None
-        and image_start_id is not None
-        and torch.any(input_ids == image_start_id)
-    ):
-        bos_pos = torch.where(input_ids == image_start_id)
-        eos_pos = torch.where(input_ids == image_start_id + 1)
-        assert (bos_pos[0] == eos_pos[0]).all()
-        img_pos = torch.stack((bos_pos[0], bos_pos[1], eos_pos[1]), dim=1)
-        image_paths = []
-        for i, a, b in img_pos:
-            image = input_ids[i][a + 1 : b - 1].tolist()
-            image = image[: image.index(image_start_id + 2)]
-            image_paths.append(bytes(image).decode("utf-8"))
-
-        images = self.visual.encode(image_paths)
-        assert images.shape[0] == len(image_paths)
-        fake_images = None
-    elif self.training:
-        fake_images = torch.zeros(1, 3, 224, 224).to(
-            dtype=self.visual.conv1.weight.dtype,
-            device=self.visual.conv1.weight.device,
-        )
-        images = self.visual(fake_images)
-        img_pos = []
-    else:
-        fake_images = None
-        images = None
-        img_pos = []
-
-    output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-    output_hidden_states = (
-        output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-    )
-    use_cache = use_cache if use_cache is not None else self.config.use_cache
-    return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-    if input_ids is not None and inputs_embeds is not None:
-        raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-    elif input_ids is not None:
-        input_shape = input_ids.size()
-        input_ids = input_ids.view(-1, input_shape[-1])
-        batch_size = input_ids.shape[0]
-    elif inputs_embeds is not None:
-        input_shape = inputs_embeds.size()[:-1]
-        batch_size = inputs_embeds.shape[0]
-    else:
-        raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-    device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-    if token_type_ids is not None:
-        token_type_ids = token_type_ids.view(-1, input_shape[-1])
-    if position_ids is not None:
-        position_ids = position_ids.view(-1, input_shape[-1])
-
-    if past_key_values is None:
-        past_length = 0
-        past_key_values = tuple([None] * len(self.h))
-    else:
-        past_length = past_key_values[0][0].size(-2)
-
-    if position_ids is None:
-        position_ids = torch.arange(
-            past_length,
-            input_shape[-1] + past_length,
-            dtype=torch.long,
-            device=device,
-        )
-        position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1])
-
-    encoder_attention_mask = None
-    head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-    if inputs_embeds is None:
-        inputs_embeds = self.wte(input_ids)
-
-    if batch_size <= 0:
-        raise ValueError("batch_size has to be defined and > 0")
-    attention_mask = self._prepare_decoder_attention_mask(
-        attention_mask, input_shape, inputs_embeds, past_length
-    )
-
-    hidden_states = inputs_embeds
-
-    kv_seq_len = hidden_states.size()[1]
-    if past_key_values[0] is not None:
-        kv_seq_len += past_key_values[0][0].shape[1]
-    if self.use_dynamic_ntk and kv_seq_len == hidden_states.size()[1] and not self.training:
-        context_value = math.log(kv_seq_len / self.seq_length, 2) + 1
-        ntk_alpha = 2 ** math.ceil(context_value) - 1
-        ntk_alpha = max(ntk_alpha, 1)
-    else:
-        ntk_alpha = self.rotary_emb._ntk_alpha_cached
-
-    rotary_pos_emb = self.rotary_emb(kv_seq_len, ntk_alpha=ntk_alpha)
-    for idx in range(len(rotary_pos_emb)):
-        rotary_pos_emb[idx] = rotary_pos_emb[idx].to(hidden_states.device)
-
-    drop_layer = getattr(self, "drop", None)
-    if callable(drop_layer):
-        hidden_states = drop_layer(hidden_states).clone()
-    else:
-        hidden_states = hidden_states.clone()
-
-    if fake_images is not None:
-        hidden_states = hidden_states + images.mean() * 0
-    elif images is not None:
-        for idx, (i, a, b) in enumerate(img_pos):
-            hidden_states[i][a + 1 : b] = images[idx]
-
-    if isinstance(images, torch.Tensor):
-        self.h[0].mlp.vision_token = images[0] if images.dim() > 2 else images
-    else:
-        self.h[0].mlp.vision_token = None
-
-    if self.gradient_checkpointing and self.training and use_cache:
-        logger.warning_once("`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.")
-        use_cache = False
-
-    next_decoder_cache = () if use_cache else None
-    all_self_attns = () if output_attentions else None
-    all_hidden_states = () if output_hidden_states else None
-
-    # MemVR control flow: same idea as llama forward
-    layer = 0
-    entropy_list = []
-    apply_memvr = getattr(self.h[0].mlp, "apply_memvr", False)
-    visual_token = getattr(self.h[0].mlp, "vision_token", None)
-    retracing_ratio = getattr(self.h[0].mlp, "retracing_ratio", 0.0)
-    entropy_threshold = getattr(self.h[0].mlp, "entropy_threshold", 1.0)
-    starting_layer = getattr(self.h[0].mlp, "starting_layer", 0)
-    ending_layer = getattr(self.h[0].mlp, "ending_layer", len(self.h) - 1)
-    visual_retracing_event = False
-    vision_retracing_sign = False
-
-    for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        # round n+1
-        # vision_retracing_sign is true, meaning that the visual token has been added.
-        # Now, clear the adaptation channel, reset adpt_sign and vision_retracing_sign.
-        if vision_retracing_sign == True:
-            self.h[layer].mlp.adpt_sign = 0
-            if visual_token is not None:
-                adapter_seed = visual_token
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
-                    adapter_seed = adapter_seed[0]
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
-                    adapter_seed = adapter_seed.unsqueeze(0)
-                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
-
-                cur_mlp = self.h[layer].mlp
-                cur_w1_seed = _fit_tensor_to_shape(adapter_seed, cur_mlp.w1.weight.shape)
-                cur_w2_seed = _fit_tensor_to_shape(adapter_seed.T, cur_mlp.c_proj.weight.shape)
-                cur_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(cur_w1_seed))
-                cur_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(cur_w2_seed))
-            else:
-                self.h[layer].mlp.adpt_w1 = None
-                self.h[layer].mlp.adpt_w2 = None
-
-            vision_retracing_sign = False
-
-        if self.gradient_checkpointing and self.training:
-
-            def create_custom_forward(module):
-                def custom_forward(*inputs):
-                    return module(*inputs, use_cache, output_attentions)
-
-                return custom_forward
-
-            outputs = torch.utils.checkpoint.checkpoint(
-                create_custom_forward(block),
-                hidden_states,
-                rotary_pos_emb,
-                self.registered_causal_mask,
-                None,
-                attention_mask,
-                head_mask[i],
-                encoder_hidden_states,
-                encoder_attention_mask,
-            )
-        else:
-            outputs = block(
-                hidden_states,
-                layer_past=layer_past,
-                rotary_pos_emb=rotary_pos_emb,
-                registered_causal_mask=self.registered_causal_mask,
-                attention_mask=attention_mask,
-                head_mask=head_mask[i],
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-            )
-
-        hidden_states = outputs[0]
-
-        if use_cache:
-            layer_cache = outputs[2 if output_attentions else 1]
-            next_decoder_cache = next_decoder_cache + (layer_cache,)
-
-        if output_attentions:
-            all_self_attns = all_self_attns + (outputs[1],)
-
-        # calculate logits/entropy at each layer (aligned with llama-style flow)
-        norm_hidden_states = self.ln_f(hidden_states)
-        logits = self.lm_head(norm_hidden_states)
-        logits = logits[:, -1, :]
-        logits = logits.float()
-        logits = logits_processor(input_ids, logits)
-
-        top_k = min(10, logits.shape[-1])
-        top_k_scores, top_k_indices = torch.topk(logits, top_k)
-        probabilities = F.softmax(top_k_scores, dim=-1)
-        entropy_base = np.log(max(top_k, 2))
-        entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
-        entropy_value = float(entropy.item())
-        formatted_entropy = f"{entropy_value:.3f}"
-        entropy_list.append(formatted_entropy)
-
-        # round n
-        # calculate entropy of top-k logits; when above threshold and in layer range,
-        # add visual token to the next layer adaptation channel.
-        if (
-            apply_memvr
-            and
-            entropy_value > entropy_threshold
-            and not visual_retracing_event
-            and layer > starting_layer
-            and layer < ending_layer
-            and layer + 1 < len(self.h)
-        ):
-            vision_retracing_sign = True
-            visual_retracing_event = True
-
-            next_mlp = self.h[layer + 1].mlp
-            next_mlp.adpt_sign = 1
-
-            if visual_token is not None:
-                adapter_seed = visual_token
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
-                    adapter_seed = adapter_seed[0]
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
-                    adapter_seed = adapter_seed.unsqueeze(0)
-                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
-
-                next_w1_seed = _fit_tensor_to_shape(adapter_seed, next_mlp.w1.weight.shape)
-                next_w2_seed = _fit_tensor_to_shape(adapter_seed.T, next_mlp.c_proj.weight.shape)
-                next_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(next_w1_seed))
-                next_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(next_w2_seed))
-
-                scale_w1 = torch.mean(torch.abs(next_mlp.w1.weight)) / (torch.mean(torch.abs(next_w1_seed)) + 1e-6)
-                scale_w2 = torch.mean(torch.abs(next_mlp.c_proj.weight)) / (torch.mean(torch.abs(next_w2_seed)) + 1e-6)
-                next_mlp.adpt_w1 += scale_w1 * next_w1_seed
-                next_mlp.adpt_w2 += scale_w2 * next_w2_seed
-                next_mlp.retracing_ratio = retracing_ratio
-
-        layer += 1
-
-    hidden_states = self.ln_f(hidden_states)
-    hidden_states = hidden_states.view(input_shape + (hidden_states.size(-1),))
-    if output_hidden_states:
-        all_hidden_states = all_hidden_states + (hidden_states,)
-
-    if not return_dict:
-        return tuple(v for v in [hidden_states, next_decoder_cache, all_hidden_states, all_self_attns] if v is not None)
-
-    return BaseModelOutputWithPast(
-        last_hidden_state=hidden_states,
-        past_key_values=next_decoder_cache,
-        hidden_states=all_hidden_states,
-        attentions=all_self_attns,
-    )
 
 
 def forward(
@@ -813,6 +484,367 @@ def prepare_inputs_labels_for_multimodal(
     
     return None, position_ids, attention_mask, past_key_values, new_input_embeds, new_labels
 
+
+class QWenMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.w1 = nn.Linear(
+            config.hidden_size, config.intermediate_size // 2, bias=not config.no_bias
+        )
+        self.w2 = nn.Linear(
+            config.hidden_size, config.intermediate_size // 2, bias=not config.no_bias
+        )
+        ff_dim_in = config.intermediate_size // 2
+        self.c_proj = nn.Linear(ff_dim_in, config.hidden_size, bias=not config.no_bias)
+
+        # MemVR
+        self.apply_memvr = False
+        self.vision_token = None
+        self.retracing_ratio = 0
+        self.entropy_threshold = 1
+        self.starting_layer = 0
+        self.ending_layer = 0
+        self.adpt_sign = 0
+        self.adpt_w1 = None
+        self.adpt_w2 = None
+
+    def forward(self, hidden_states):
+        return qwen_mlp_forward(self, hidden_states)
+
+
+def qwen_mlp_forward(self, hidden_states):
+    a1 = self.w1(hidden_states)
+    a2 = self.w2(hidden_states)
+    intermediate_parallel = a1 * F.silu(a2)
+    output = self.c_proj(intermediate_parallel)
+
+    if getattr(self, "adpt_sign", 0) == 1:
+        adpt_w1 = getattr(self, "adpt_w1", None)
+        adpt_w2 = getattr(self, "adpt_w2", None)
+        if adpt_w1 is not None and adpt_w2 is not None:
+            adapter_source = hidden_states[0] if hidden_states.dim() == 3 else hidden_states
+            if adapter_source.dim() == 1:
+                adapter_source = adapter_source.unsqueeze(0)
+            if adpt_w1.dim() == 3:
+                adpt_w1 = adpt_w1[0]
+            if adpt_w2.dim() == 3:
+                adpt_w2 = adpt_w2[0]
+
+            adapter_out = torch.matmul(F.silu(torch.matmul(adapter_source, adpt_w1.T)), adpt_w2.T)
+            if hidden_states.dim() == 3 and adapter_out.dim() == 2:
+                adapter_out = adapter_out.unsqueeze(0)
+
+            eps = 1e-6
+            norm_scale = torch.mean(torch.abs(output)) / (torch.mean(torch.abs(adapter_out)) + eps)
+            retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
+            return output * (1 - retracing_ratio) + norm_scale * adapter_out * retracing_ratio
+
+    return output
+
+def qwen_model_forward(
+    self,
+    input_ids: Optional[torch.LongTensor] = None,
+    past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+    attention_mask: Optional[torch.FloatTensor] = None,
+    token_type_ids: Optional[torch.LongTensor] = None,
+    position_ids: Optional[torch.LongTensor] = None,
+    head_mask: Optional[torch.FloatTensor] = None,
+    inputs_embeds: Optional[torch.FloatTensor] = None,
+    encoder_hidden_states: Optional[torch.Tensor] = None,
+    encoder_attention_mask: Optional[torch.FloatTensor] = None,
+    use_cache: Optional[bool] = None,
+    output_attentions: Optional[bool] = None,
+    output_hidden_states: Optional[bool] = None,
+    return_dict: Optional[bool] = None,
+    logits_processor=LogitsProcessorList(),
+):
+    visual_config = getattr(self.config, "visual", None)
+    image_start_id = None
+    if isinstance(visual_config, dict):
+        image_start_id = visual_config.get("image_start_id")
+    elif visual_config is not None:
+        image_start_id = getattr(visual_config, "image_start_id", None)
+
+    if (
+        past_key_values is None
+        and input_ids is not None
+        and image_start_id is not None
+        and torch.any(input_ids == image_start_id)
+    ):
+        bos_pos = torch.where(input_ids == image_start_id)
+        eos_pos = torch.where(input_ids == image_start_id + 1)
+        assert (bos_pos[0] == eos_pos[0]).all()
+        img_pos = torch.stack((bos_pos[0], bos_pos[1], eos_pos[1]), dim=1)
+        image_paths = []
+        for i, a, b in img_pos:
+            image = input_ids[i][a + 1 : b - 1].tolist()
+            image = image[: image.index(image_start_id + 2)]
+            image_paths.append(bytes(image).decode("utf-8"))
+
+        images = self.visual.encode(image_paths)
+        assert images.shape[0] == len(image_paths)
+        fake_images = None
+    elif self.training:
+        fake_images = torch.zeros(1, 3, 224, 224).to(
+            dtype=self.visual.conv1.weight.dtype,
+            device=self.visual.conv1.weight.device,
+        )
+        images = self.visual(fake_images)
+        img_pos = []
+    else:
+        fake_images = None
+        images = None
+        img_pos = []
+
+    output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+    output_hidden_states = (
+        output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+    )
+    use_cache = use_cache if use_cache is not None else self.config.use_cache
+    return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+    if input_ids is not None and inputs_embeds is not None:
+        raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+    elif input_ids is not None:
+        input_shape = input_ids.size()
+        input_ids = input_ids.view(-1, input_shape[-1])
+        batch_size = input_ids.shape[0]
+    elif inputs_embeds is not None:
+        input_shape = inputs_embeds.size()[:-1]
+        batch_size = inputs_embeds.shape[0]
+    else:
+        raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+    device = input_ids.device if input_ids is not None else inputs_embeds.device
+
+    if token_type_ids is not None:
+        token_type_ids = token_type_ids.view(-1, input_shape[-1])
+    if position_ids is not None:
+        position_ids = position_ids.view(-1, input_shape[-1])
+
+    if past_key_values is None:
+        past_length = 0
+        past_key_values = tuple([None] * len(self.h))
+    else:
+        past_length = past_key_values[0][0].size(-2)
+
+    if position_ids is None:
+        position_ids = torch.arange(
+            past_length,
+            input_shape[-1] + past_length,
+            dtype=torch.long,
+            device=device,
+        )
+        position_ids = position_ids.unsqueeze(0).view(-1, input_shape[-1])
+
+    encoder_attention_mask = None
+    head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+
+    if inputs_embeds is None:
+        inputs_embeds = self.wte(input_ids)
+
+    if batch_size <= 0:
+        raise ValueError("batch_size has to be defined and > 0")
+    attention_mask = self._prepare_decoder_attention_mask(
+        attention_mask, input_shape, inputs_embeds, past_length
+    )
+
+    hidden_states = inputs_embeds
+
+    kv_seq_len = hidden_states.size()[1]
+    if past_key_values[0] is not None:
+        kv_seq_len += past_key_values[0][0].shape[1]
+    if self.use_dynamic_ntk and kv_seq_len == hidden_states.size()[1] and not self.training:
+        context_value = math.log(kv_seq_len / self.seq_length, 2) + 1
+        ntk_alpha = 2 ** math.ceil(context_value) - 1
+        ntk_alpha = max(ntk_alpha, 1)
+    else:
+        ntk_alpha = self.rotary_emb._ntk_alpha_cached
+
+    rotary_pos_emb = self.rotary_emb(kv_seq_len, ntk_alpha=ntk_alpha)
+    for idx in range(len(rotary_pos_emb)):
+        rotary_pos_emb[idx] = rotary_pos_emb[idx].to(hidden_states.device)
+
+    drop_layer = getattr(self, "drop", None)
+    if callable(drop_layer):
+        hidden_states = drop_layer(hidden_states).clone()
+    else:
+        hidden_states = hidden_states.clone()
+
+    if fake_images is not None:
+        hidden_states = hidden_states + images.mean() * 0
+    elif images is not None:
+        for idx, (i, a, b) in enumerate(img_pos):
+            hidden_states[i][a + 1 : b] = images[idx]
+
+    if isinstance(images, torch.Tensor):
+        self.h[0].mlp.vision_token = images[0] if images.dim() > 2 else images
+    else:
+        self.h[0].mlp.vision_token = None
+
+    if self.gradient_checkpointing and self.training and use_cache:
+        logger.warning_once("`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.")
+        use_cache = False
+
+    next_decoder_cache = () if use_cache else None
+    all_self_attns = () if output_attentions else None
+    all_hidden_states = () if output_hidden_states else None
+
+    # MemVR control flow: same idea as llama forward
+    layer = 0
+    entropy_list = []
+    apply_memvr = getattr(self.h[0].mlp, "apply_memvr", False)
+    visual_token = getattr(self.h[0].mlp, "vision_token", None)
+    retracing_ratio = getattr(self.h[0].mlp, "retracing_ratio", 0.0)
+    entropy_threshold = getattr(self.h[0].mlp, "entropy_threshold", 1.0)
+    starting_layer = getattr(self.h[0].mlp, "starting_layer", 0)
+    ending_layer = getattr(self.h[0].mlp, "ending_layer", len(self.h) - 1)
+    visual_retracing_event = False
+    vision_retracing_sign = False
+
+    for i, (block, layer_past) in enumerate(zip(self.h, past_key_values)):
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_states,)
+
+        # round n+1
+        # vision_retracing_sign is true, meaning that the visual token has been added.
+        # Now, clear the adaptation channel, reset adpt_sign and vision_retracing_sign.
+        if vision_retracing_sign == True:
+            self.h[layer].mlp.adpt_sign = 0
+            if visual_token is not None:
+                adapter_seed = visual_token
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                cur_mlp = self.h[layer].mlp
+                cur_w1_seed = _fit_tensor_to_shape(adapter_seed, cur_mlp.w1.weight.shape)
+                cur_w2_seed = _fit_tensor_to_shape(adapter_seed.T, cur_mlp.c_proj.weight.shape)
+                cur_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(cur_w1_seed))
+                cur_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(cur_w2_seed))
+            else:
+                self.h[layer].mlp.adpt_w1 = None
+                self.h[layer].mlp.adpt_w2 = None
+
+            vision_retracing_sign = False
+
+        if self.gradient_checkpointing and self.training:
+
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    return module(*inputs, use_cache, output_attentions)
+
+                return custom_forward
+
+            outputs = torch.utils.checkpoint.checkpoint(
+                create_custom_forward(block),
+                hidden_states,
+                rotary_pos_emb,
+                self.registered_causal_mask,
+                None,
+                attention_mask,
+                head_mask[i],
+                encoder_hidden_states,
+                encoder_attention_mask,
+            )
+        else:
+            outputs = block(
+                hidden_states,
+                layer_past=layer_past,
+                rotary_pos_emb=rotary_pos_emb,
+                registered_causal_mask=self.registered_causal_mask,
+                attention_mask=attention_mask,
+                head_mask=head_mask[i],
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+            )
+
+        hidden_states = outputs[0]
+
+        if use_cache:
+            layer_cache = outputs[2 if output_attentions else 1]
+            next_decoder_cache = next_decoder_cache + (layer_cache,)
+
+        if output_attentions:
+            all_self_attns = all_self_attns + (outputs[1],)
+
+        # calculate logits/entropy at each layer (aligned with llama-style flow)
+        norm_hidden_states = self.ln_f(hidden_states)
+        logits = self.lm_head(norm_hidden_states)
+        logits = logits[:, -1, :]
+        logits = logits.float()
+        logits = logits_processor(input_ids, logits)
+
+        top_k = min(10, logits.shape[-1])
+        top_k_scores, top_k_indices = torch.topk(logits, top_k)
+        probabilities = F.softmax(top_k_scores, dim=-1)
+        entropy_base = np.log(max(top_k, 2))
+        entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
+        entropy_value = float(entropy.item())
+        formatted_entropy = f"{entropy_value:.3f}"
+        entropy_list.append(formatted_entropy)
+
+        # round n
+        # calculate entropy of top-k logits; when above threshold and in layer range,
+        # add visual token to the next layer adaptation channel.
+        if (
+            apply_memvr
+            and
+            entropy_value > entropy_threshold
+            and not visual_retracing_event
+            and layer > starting_layer
+            and layer < ending_layer
+            and layer + 1 < len(self.h)
+        ):
+            vision_retracing_sign = True
+            visual_retracing_event = True
+
+            next_mlp = self.h[layer + 1].mlp
+            next_mlp.adpt_sign = 1
+
+            if visual_token is not None:
+                adapter_seed = visual_token
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                next_w1_seed = _fit_tensor_to_shape(adapter_seed, next_mlp.w1.weight.shape)
+                next_w2_seed = _fit_tensor_to_shape(adapter_seed.T, next_mlp.c_proj.weight.shape)
+                next_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(next_w1_seed))
+                next_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(next_w2_seed))
+
+                scale_w1 = torch.mean(torch.abs(next_mlp.w1.weight)) / (torch.mean(torch.abs(next_w1_seed)) + 1e-6)
+                scale_w2 = torch.mean(torch.abs(next_mlp.c_proj.weight)) / (torch.mean(torch.abs(next_w2_seed)) + 1e-6)
+                next_mlp.adpt_w1 += scale_w1 * next_w1_seed
+                next_mlp.adpt_w2 += scale_w2 * next_w2_seed
+                next_mlp.retracing_ratio = retracing_ratio
+
+        layer += 1
+
+    hidden_states = self.ln_f(hidden_states)
+    hidden_states = hidden_states.view(input_shape + (hidden_states.size(-1),))
+    if output_hidden_states:
+        all_hidden_states = all_hidden_states + (hidden_states,)
+
+    if not return_dict:
+        return tuple(v for v in [hidden_states, next_decoder_cache, all_hidden_states, all_self_attns] if v is not None)
+
+    return BaseModelOutputWithPast(
+        last_hidden_state=hidden_states,
+        past_key_values=next_decoder_cache,
+        hidden_states=all_hidden_states,
+        attentions=all_self_attns,
+    )
+
+
+
+
 def apply_memvr_llama(
         self,
         starting_layer: int,
@@ -839,10 +871,27 @@ def apply_memvr_qwen(
         entropy_threshold: float,
         retracing_ratio: float
     ):
-    qwen_mlp_cls = type(self.transformer.h[0].mlp)
-    qwen_model_cls = type(self.transformer)
+    qwen_module = importlib.import_module(self.transformer.__class__.__module__)
+
+    qwen_module.QWenMLP = QWenMLP
+    if hasattr(qwen_module, "QWenModel"):
+        qwen_module.QWenModel.forward = qwen_model_forward
+    
+    ipdb.set_trace()
+    
+    # Also patch currently-instantiated runtime classes so existing model objects take effect immediately.
+    type(self.transformer).forward = qwen_model_forward
+    for block in self.transformer.h:
+        type(block.mlp).forward = qwen_mlp_forward
+
+    qwen_mlp_cls = getattr(qwen_module, "QWenMLP", type(self.transformer.h[0].mlp))
+    qwen_model_cls = getattr(qwen_module, "QWenModel", type(self.transformer))
     qwen_mlp_cls.forward = qwen_mlp_forward
     qwen_model_cls.forward = qwen_model_forward
+
+    print("QWenMLP symbol replaced:", qwen_module.QWenMLP is QWenMLP)
+    print("QWenModel.forward replaced:", type(self.transformer).forward is qwen_model_forward)
+    print("MLP instance class forward replaced:", type(self.transformer.h[0].mlp).forward is qwen_mlp_forward)
 
     self.transformer.lm_head = self.lm_head
 
@@ -861,17 +910,3 @@ def apply_memvr_qwen(
         mlp.adpt_sign = 0
         mlp.adpt_w1 = None
         mlp.adpt_w2 = None
-
-def apply_memvr_glm(
-        self,
-        starting_layer: int,
-        ending_layer: int,
-        entropy_threshold: float,
-        retracing_ratio: float
-    ):
-    self.transformer.encoder.layers[0].mlp.apply_memvr = True
-    self.transformer.encoder.layers[0].mlp.starting_layer = starting_layer
-    self.transformer.encoder.layers[0].mlp.ending_layer = ending_layer
-    self.transformer.encoder.layers[0].mlp.entropy_threshold = entropy_threshold
-    for layer in range(31):
-        self.transformer.encoder.layers[0].mlp.retracing_ratio = retracing_ratio
