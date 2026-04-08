@@ -915,12 +915,9 @@ class Qwen2MLP(nn.Module):
             down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         elif self.adpt_sign == 1:
             ffn_out = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-            if self.adpt_w1 is None or self.adpt_w2 is None:
-                return ffn_out
-            adapter_out = torch.matmul(torch.matmul(x, self.adpt_w1.T), self.adpt_w2.T)
-            eps = 1e-6
-            norm_adapter_out = (torch.mean(torch.abs(ffn_out)) / (torch.mean(torch.abs(adapter_out)) + eps)) * adapter_out
-            return ffn_out * (1 - self.retracing_ratio) + norm_adapter_out * self.retracing_ratio
+            adapter_out = torch.matmul(torch.matmul(x, self.adpt_w1.T), self.adpt_w2)
+            norm_adapter_out = (torch.mean(torch.abs(ffn_out)) / torch.mean(torch.abs((adapter_out)))) * adapter_out
+            return (ffn_out*(1-self.retracing_ratio) + norm_adapter_out*self.retracing_ratio)
 
         return down_proj
     
@@ -1021,11 +1018,12 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        # MemVR
+          # MemVR
         layer = 0
         entropy_list = []
         apply_memvr = self.layers[0].mlp.apply_memvr
         visual_token = self.layers[0].mlp.visual_token
+        
         retracing_ratio = self.layers[0].mlp.retracing_ratio
         entropy_threshold = self.layers[0].mlp.entropy_threshold
         starting_layer = self.layers[0].mlp.starting_layer
@@ -1047,7 +1045,6 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 use_cache=use_cache,
                 **kwargs,
             )
-            # ipdb.set_trace()
 
             if not apply_memvr or not hasattr(self, "lm_head"):
                 layer += 1
@@ -1075,7 +1072,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                     current_mlp.adpt_w1 = None
                     current_mlp.adpt_w2 = None
                 vision_retracing_sign = False
+                # print("\n added visual token with adatption channel at layer ", layer)
             
+            # print(f"Layer {layer}: entropy {entropy_value:.4f}, threshold {entropy_threshold}, visual token {visual_token is not None}, visual retracing event {visual_retracing_event}, starting layer {starting_layer}, ending layer {ending_layer}")
             if (
                 entropy_value > entropy_threshold
                 and not visual_retracing_event
@@ -1084,7 +1083,6 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 and layer < ending_layer
                 and layer + 1 < len(self.layers)
             ):  
-                
                 vision_retracing_sign = True
                 visual_retracing_event = True
 
@@ -1504,9 +1502,12 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         if vision_token is not None:
             if vision_token.dim() > 2:
                 vision_token = vision_token[0]
-            self.language_model.layers[0].mlp.vision_token = vision_token
+            # Inject into the instantiated first MLP layer for MemVR retracing.
+            first_mlp = self.language_model.layers[0].mlp
+            first_mlp.visual_token = vision_token
         else:
-            self.language_model.layers[0].mlp.vision_token = None
+            first_mlp = self.language_model.layers[0].mlp
+            first_mlp.visual_token = None
 
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(

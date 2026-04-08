@@ -36,7 +36,7 @@ tt3498820.txt	Is this movie originated from the country or region of usa? Please
 tt3498820.txt	Is this movie originated from the country or region of germany? Please answer yes or no.	No	No
 tt0071315.txt	Is this movie titled chinatown (1974)? Please answer yes or no.	Yes	Yes
 tt0071315.txt	Is this movie titled planet of the apes (1968)? Please answer yes or no.	No	no
-tt0129387.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	USA
+tt0129387.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	Yes
 tt0129387.txt	Is this movie originated from the country or region of germany? Please answer yes or no.	No	No
 tt1454029.txt	Is this movie titled the help (2011)? Please answer yes or no.	Yes	Yes
 tt1454029.txt	Is this movie titled avatar (2009)? Please answer yes or no.	No	No
@@ -108,7 +108,7 @@ tt3465916.txt	Is this movie originated from the country or region of germany? Pl
 tt3465916.txt	Is this movie originated from the country or region of spain? Please answer yes or no.	No	No
 tt0187078.txt	Is this movie titled gone in 60 seconds (2000)? Please answer yes or no.	Yes	Yes
 tt0187078.txt	Is this movie titled avatar (2009)? Please answer yes or no.	No	No
-tt0083907.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	USA
+tt0083907.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	Yes
 tt0083907.txt	Is this movie originated from the country or region of bulgaria? Please answer yes or no.	No	No
 tt0048028.txt	Is this movie directed by elia kazan? Please answer yes or no.	Yes	yes
 tt0048028.txt	Is this movie directed by maneesh sharma? Please answer yes or no.	No	no
@@ -120,7 +120,7 @@ tt0450259.txt	Is this movie originated from the country or region of usa? Please
 tt0450259.txt	Is this movie originated from the country or region of china? Please answer yes or no.	No	No
 tt0097576.txt	Is this movie directed by steven spielberg? Please answer yes or no.	Yes	Yes
 tt0097576.txt	Is this movie directed by francis ford coppola? Please answer yes or no.	No	no
-tt0098635.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	USA
+tt0098635.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	Yes
 tt0098635.txt	Is this movie originated from the country or region of spain? Please answer yes or no.	No	No
 tt2017561.txt	Is this movie directed by stephen chow,chi-kin kwok? Please answer yes or no.	Yes	Yes
 tt2017561.txt	Is this movie directed by craig gillespie? Please answer yes or no.	No	No
@@ -178,7 +178,7 @@ tt0264395.txt	Is this movie originated from the country or region of germany? Pl
 tt0264395.txt	Is this movie originated from the country or region of australia? Please answer yes or no.	No	No
 tt0351977.txt	Is this movie directed by kevin bray? Please answer yes or no.	Yes	Yes
 tt0351977.txt	Is this movie directed by joe johnston? Please answer yes or no.	No	No
-tt0449088.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	yes
+tt0449088.txt	Is this movie originated from the country or region of usa? Please answer yes or no.	Yes	Yes
 tt0449088.txt	Is this movie originated from the country or region of japan? Please answer yes or no.	No	No
 tt0099653.txt	Is this movie directed by jerry zucker? Please answer yes or no.	Yes	Yes
 tt0099653.txt	Is this movie directed by felix chong,alan mak? Please answer yes or no.	No	No

@@ -5,7 +5,7 @@
 13239.txt	Is this artwork titled doge ziani receiving the benediction of pope alexander iii? Please answer yes or no.	Yes	Yes
 13239.txt	Is this artwork titled the adoration of the shepherds? Please answer yes or no.	No	No
 38740.txt	Is this artwork displayed in musée toulouse-lautrec, albi? Please answer yes or no.	Yes	Yes
-38740.txt	Is this artwork displayed in kupferstichkabinett, gotha? Please answer yes or no.	No	No
+38740.txt	Is this artwork displayed in kupferstichkabinett, gotha? Please answer yes or no.	No	Yes
 42288.txt	Does this artwork exist in the form of painting? Please answer yes or no.	Yes	Yes
 42288.txt	Does this artwork exist in the form of stained-glass? Please answer yes or no.	No	no
 10881.txt	Does this artwork exist in the form of painting? Please answer yes or no.	Yes	Yes
@@ -74,7 +74,7 @@
 41594.txt	Is this artwork created by jeaurat, etienne? Please answer yes or no.	No	No
 11488.txt	Does this artwork belong to the type of mythological? Please answer yes or no.	Yes	Yes
 11488.txt	Does this artwork belong to the type of historical? Please answer yes or no.	No	Yes
-36966.txt	Does this artwork belong to the type of portrait? Please answer yes or no.	Yes	Yes
+36966.txt	Does this artwork belong to the type of portrait? Please answer yes or no.	Yes	yes
 36966.txt	Does this artwork belong to the type of religious? Please answer yes or no.	No	Yes
 32147.txt	Is this artwork titled lucretia? Please answer yes or no.	Yes	Yes
 32147.txt	Is this artwork titled rinaldo abandoning armida (detail)? Please answer yes or no.	No	Yes
@@ -183,7 +183,7 @@
 12652.txt	Is this artwork displayed in stedelijk museum de lakenhal, leiden? Please answer yes or no.	Yes	Yes
 12652.txt	Is this artwork displayed in palazzo ducale, mantua? Please answer yes or no.	No	Yes
 10581.txt	Does this artwork belong to the type of portrait? Please answer yes or no.	Yes	Yes
-10581.txt	Does this artwork belong to the type of genre? Please answer yes or no.	No	portrait
+10581.txt	Does this artwork belong to the type of genre? Please answer yes or no.	No	yes
 39188.txt	Does this artwork exist in the form of painting? Please answer yes or no.	Yes	yes
 39188.txt	Does this artwork exist in the form of architecture? Please answer yes or no.	No	no
 28345.txt	Does this artwork exist in the form of painting? Please answer yes or no.	Yes	Yes

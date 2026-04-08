@@ -57,7 +57,7 @@
 06a85d0b5d70881d.txt	Is this an image of Silwan? Please answer yes or no.	Yes	Yes
 06a85d0b5d70881d.txt	Is this an image of Jagdschloss Platte? Please answer yes or no.	No	no
 162a77504f4e686e.txt	Is this an image of Wieliczka Castle? Please answer yes or no.	Yes	Yes
-162a77504f4e686e.txt	Is this an image of Naval Station Guantanamo Bay? Please answer yes or no.	No	no
+162a77504f4e686e.txt	Is this an image of Naval Station Guantanamo Bay? Please answer yes or no.	No	No
 0200cce957e9c4a6.txt	Is this a photo of Malmuerta Tower? Please answer yes or no.	Yes	Yes
 0200cce957e9c4a6.txt	Is this a photo of Monte Lema? Please answer yes or no.	No	No
 0b8fa4152f1bc3ed.txt	Is this a picture of Lac du Salagou? Please answer yes or no.	Yes	Yes
@@ -279,7 +279,7 @@
 08c43cd8f2be6709.txt	Is this a picture of Parchi di Nervi? Please answer yes or no.	Yes	Yes
 08c43cd8f2be6709.txt	Is this a picture of Altlayer Schweiz? Please answer yes or no.	No	No
 14d3aba340d2fba9.txt	Is this an image of Regard Saint-Martin? Please answer yes or no.	Yes	Yes
-14d3aba340d2fba9.txt	Is this an image of Mount Donna Buang? Please answer yes or no.	No	no
+14d3aba340d2fba9.txt	Is this an image of Mount Donna Buang? Please answer yes or no.	No	No
 039bbdf71cd17b3f.txt	Is this a picture of Qiantang River Bridge? Please answer yes or no.	Yes	Yes
 039bbdf71cd17b3f.txt	Is this a picture of Casa Museo Boschi Di Stefano (Milan)? Please answer yes or no.	No	No
 01f23b4c5253e9c6.txt	Is this a picture of Goethes Gartenhaus? Please answer yes or no.	Yes	Yes
@@ -335,7 +335,7 @@
 045b65ea196dac3f.txt	Is this a photo of Republican architecture in Manizales? Please answer yes or no.	Yes	Yes
 045b65ea196dac3f.txt	Is this a photo of Kayauchi-banta Cliff? Please answer yes or no.	No	no
 03280db41fd4e4f5.txt	Is this a picture of Oxford Street? Please answer yes or no.	Yes	yes
-03280db41fd4e4f5.txt	Is this a picture of Blake Fell? Please answer yes or no.	No	no
+03280db41fd4e4f5.txt	Is this a picture of Blake Fell? Please answer yes or no.	No	No
 0b64944086932c90.txt	Is this a picture of Alte Pfarrkirche St. Martin (Moosach)? Please answer yes or no.	Yes	Yes
 0b64944086932c90.txt	Is this a picture of Maya Devi Temple, Lumbini? Please answer yes or no.	No	No
 0022666a36b80ea5.txt	Is this an image of Hall of Supreme Harmony (Forbidden City)? Please answer yes or no.	Yes	Yes

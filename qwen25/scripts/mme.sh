@@ -12,7 +12,8 @@ export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
 #   bash qwen25/scripts/mme.sh
 #   bash qwen25/scripts/mme.sh memvr
 #   bash qwen25/scripts/mme.sh memvr 4
-#   bash qwen25/scripts/mme.sh memvr 4 "0,1,2,3"
+#   bash qwen25/scripts/mme.sh memvr 4 "0,1,2,7"
+#   bash qwen25/scripts/mme.sh memvr 1 "1"
 MODE="${1:-memvr}"
 NUM_GPUS="${2:-1}"
 GPU_IDS_CSV="${3:-}"
@@ -85,7 +86,7 @@ if [[ "$NUM_GPUS" -eq 1 ]]; then
         --cuda-device 'cuda:0' \
         --apply-memvr "$APPLY_MEMVR" \
         --retracing-ratio 0.25 \
-        --entropy-threshold 0.95 \
+        --entropy-threshold 0.65 \
         --max-new-tokens 2 \
         --starting-layer 8 \
         --ending-layer 16 \
