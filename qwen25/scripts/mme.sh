@@ -30,7 +30,12 @@ fi
 
 MODEL_NAME="Qwen2.5-VL"
 MODEL_PATH="/data/ssz/llms/Qwen2.5-VL"
-RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE"
+RUN_TAG="${MME_RUN_TAG:-}"
+if [[ -n "$RUN_TAG" ]]; then
+    RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE/$RUN_TAG"
+else
+    RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE"
+fi
 ANSWERS_FILE="$RESULTS_ROOT/answers.jsonl"
 EVAL_RESULTS_DIR="$RESULTS_ROOT/eval_answers"
 if [[ "$MODE" == "memvr" ]]; then
@@ -39,10 +44,39 @@ else
     APPLY_MEMVR="none"
 fi
 
+if [[ -n "${ENTROPY_THRESHOLD:-}" ]]; then
+    ENTROPY_THRESHOLD_VALUE="$ENTROPY_THRESHOLD"
+elif [[ "$NUM_GPUS" -eq 1 ]]; then
+    ENTROPY_THRESHOLD_VALUE="0.65"
+else
+    ENTROPY_THRESHOLD_VALUE="0.75"
+fi
+
+if [[ -n "${STARTING_LAYER:-}" ]]; then
+    STARTING_LAYER_VALUE="$STARTING_LAYER"
+elif [[ "$NUM_GPUS" -eq 1 ]]; then
+    STARTING_LAYER_VALUE="8"
+else
+    STARTING_LAYER_VALUE="10"
+fi
+
+if [[ -n "${ENDING_LAYER:-}" ]]; then
+    ENDING_LAYER_VALUE="$ENDING_LAYER"
+else
+    ENDING_LAYER_VALUE="16"
+fi
+
+RETRACING_RATIO_VALUE="${RETRACING_RATIO:-0.25}"
+MAX_NEW_TOKENS_VALUE="${MAX_NEW_TOKENS:-2}"
+
 mkdir -p "$RESULTS_ROOT"
 
 echo "[MME] mode=$MODE"
 echo "[MME] num_gpus=$NUM_GPUS"
+echo "[MME] run_tag=${RUN_TAG:-none}"
+echo "[MME] entropy_threshold=$ENTROPY_THRESHOLD_VALUE"
+echo "[MME] starting_layer=$STARTING_LAYER_VALUE"
+echo "[MME] ending_layer=$ENDING_LAYER_VALUE"
 echo "[MME] answers_file=$ANSWERS_FILE"
 
 BASE_QUESTION_FILE="$MME_ROOT/llava_mme.jsonl"
@@ -85,11 +119,11 @@ if [[ "$NUM_GPUS" -eq 1 ]]; then
         --temperature 0.1 \
         --cuda-device 'cuda:0' \
         --apply-memvr "$APPLY_MEMVR" \
-        --retracing-ratio 0.25 \
-        --entropy-threshold 0.65 \
-        --max-new-tokens 2 \
-        --starting-layer 8 \
-        --ending-layer 16 \
+        --retracing-ratio "$RETRACING_RATIO_VALUE" \
+        --entropy-threshold "$ENTROPY_THRESHOLD_VALUE" \
+        --max-new-tokens "$MAX_NEW_TOKENS_VALUE" \
+        --starting-layer "$STARTING_LAYER_VALUE" \
+        --ending-layer "$ENDING_LAYER_VALUE" \
         --num-chunks 1 \
         --chunk-idx 0
 else
@@ -108,11 +142,11 @@ else
             --temperature 0 \
             --cuda-device 'cuda:0' \
             --apply-memvr "$APPLY_MEMVR" \
-            --retracing-ratio 0.25 \
-            --entropy-threshold 0.75 \
-            --max-new-tokens 2 \
-            --starting-layer 10 \
-            --ending-layer 16 \
+            --retracing-ratio "$RETRACING_RATIO_VALUE" \
+            --entropy-threshold "$ENTROPY_THRESHOLD_VALUE" \
+            --max-new-tokens "$MAX_NEW_TOKENS_VALUE" \
+            --starting-layer "$STARTING_LAYER_VALUE" \
+            --ending-layer "$ENDING_LAYER_VALUE" \
             --num-chunks "$NUM_GPUS" \
             --chunk-idx "$chunk_idx" &
         PIDS+=("$!")
@@ -137,7 +171,11 @@ if [[ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ]]; then
 fi
 
 # convert_answer_to_mme.py expects the canonical layout under $MME_ROOT.
-EXPERIMENT="$MODEL_NAME/$MODE"
+if [[ -n "$RUN_TAG" ]]; then
+    EXPERIMENT="$MODEL_NAME/$MODE/$RUN_TAG"
+else
+    EXPERIMENT="$MODEL_NAME/$MODE"
+fi
 MME_ANSWERS_FILE="$MME_ROOT/answers/${EXPERIMENT}.jsonl"
 mkdir -p "$(dirname "$MME_ANSWERS_FILE")"
 cp "$ANSWERS_FILE" "$MME_ANSWERS_FILE"
