@@ -79,6 +79,8 @@ def run_qa_eval(args, model_name, processor, model):
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
 
     device = get_model_device(model)
+    total_samples = len(questions)
+    triggered_samples = 0
     with open(answers_file, "w") as ans_file:
         for line in tqdm(questions, total=len(questions), desc="Qwen eval", ncols=100):
             qid = line["question_id"]
@@ -87,6 +89,7 @@ def run_qa_eval(args, model_name, processor, model):
             image_path = os.path.join(args.image_folder, image_name)
 
             with torch.inference_mode():
+                before_trigger_total = getattr(model.model.language_model, "_memvr_trigger_total", 0)
                 messages = [
                     {
                         "role": "user",
@@ -118,6 +121,9 @@ def run_qa_eval(args, model_name, processor, model):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
+                after_trigger_total = getattr(model.model.language_model, "_memvr_trigger_total", 0)
+                if after_trigger_total > before_trigger_total:
+                    triggered_samples += 1
 
             ans_file.write(
                 json.dumps(
@@ -132,6 +138,26 @@ def run_qa_eval(args, model_name, processor, model):
                 )
                 + "\n"
             )
+
+    if total_samples > 0:
+        triggered_ratio = triggered_samples / total_samples
+    else:
+        triggered_ratio = 0.0
+    stats = {
+        "total_samples": total_samples,
+        "triggered_samples": triggered_samples,
+        "triggered_ratio": triggered_ratio,
+    }
+    stats_file = f"{answers_file}.memvr_stats.json"
+    with open(stats_file, "w") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+
+    print(
+        f"[MemVR Stats] total_samples={total_samples} "
+        f"triggered_samples={triggered_samples} "
+        f"triggered_ratio={triggered_ratio:.4f} "
+        f"stats_file={stats_file}"
+    )
 
 
 def run_chair_eval(args, processor, model):

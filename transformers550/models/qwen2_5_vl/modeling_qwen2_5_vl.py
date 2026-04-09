@@ -946,6 +946,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         self.rotary_emb = Qwen2_5_VLRotaryEmbedding(config=config)
 
         self.gradient_checkpointing = False
+        self._memvr_trigger_total = 0
+        self._memvr_last_triggered = False
+        self._memvr_last_trigger_layer = -1
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -960,11 +963,14 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         past_key_values: Cache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
-        image_token_mask: torch.BoolTensor | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> BaseModelOutputWithPast:
+        image_token_mask = kwargs.pop("image_token_mask", None)
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+        self._memvr_last_triggered = False
+        self._memvr_last_trigger_layer = -1
 
         # torch.jit.trace() doesn't support cache objects in the output
         if use_cache and past_key_values is None and not torch.jit.is_tracing():
@@ -1091,6 +1097,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             ):  
                 vision_retracing_sign = True
                 visual_retracing_event = True
+                self._memvr_last_triggered = True
+                self._memvr_last_trigger_layer = layer
+                self._memvr_trigger_total += 1
 
                 next_mlp = self.layers[layer + 1].mlp
                 next_mlp.adpt_sign = 1

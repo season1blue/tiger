@@ -24,7 +24,7 @@ mme_root_default="../Datasets/MME"
 model_name_default="Qwen2.5-VL"
 model_path_default="../llms/Qwen2.5-VL-7B-Instruct"
 
-entropy_threshold_default="0.3"
+entropy_threshold_default="0.75"
 starting_layer_default="10"
 ending_layer_default="16"
 retracing_ratio_default="0.12"
