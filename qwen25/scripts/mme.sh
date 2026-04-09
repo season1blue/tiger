@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-MME_ROOT="/data/ssz/Datasets/MME"
+MME_ROOT="/mnt/data/ssz/Datasets/MME"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -29,7 +29,7 @@ if ! [[ "$NUM_GPUS" =~ ^[0-9]+$ ]] || [[ "$NUM_GPUS" -lt 1 ]]; then
 fi
 
 MODEL_NAME="Qwen2.5-VL"
-MODEL_PATH="/data/ssz/llms/Qwen2.5-VL"
+MODEL_PATH="/mnt/data/ssz/llms/Qwen2.5-VL-7B-Instruct"
 RUN_TAG="${MME_RUN_TAG:-}"
 if [[ -n "$RUN_TAG" ]]; then
     RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE/$RUN_TAG"

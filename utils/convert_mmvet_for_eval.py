@@ -16,3 +16,4 @@ for line in open(args.src):
 
 with open(args.dst, 'w') as f:
     json.dump(cur_result, f, indent=2)
+
