@@ -2,191 +2,214 @@
 
 set -euo pipefail
 
-MME_ROOT="/mnt/data/ssz/Datasets/MME"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$ROOT_DIR"
-export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "$script_dir/../.." && pwd)"
+cd "$root_dir"
+export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 
 # Usage:
 #   bash qwen25/scripts/mme.sh
 #   bash qwen25/scripts/mme.sh memvr
 #   bash qwen25/scripts/mme.sh memvr 4
-#   bash qwen25/scripts/mme.sh memvr 4 "0,1,2,7"
+#   bash qwen25/scripts/mme.sh memvr 4 "0,1,2,3"
 #   bash qwen25/scripts/mme.sh memvr 1 "1"
-MODE="${1:-memvr}"
-NUM_GPUS="${2:-1}"
-GPU_IDS_CSV="${3:-}"
-if [[ "$MODE" != "memvr" && "$MODE" != "none" ]]; then
-    echo "Invalid mode: $MODE"
+mode="${1:-memvr}"
+num_gpus="${2:-1}"
+gpu_ids_csv="${3:-}"
+
+# -----------------------------------------------------------------------------
+# Default parameters (edit here)
+# -----------------------------------------------------------------------------
+mme_root_default="../Datasets/MME"
+model_name_default="Qwen2.5-VL"
+model_path_default="../llms/Qwen2.5-VL-7B-Instruct"
+
+entropy_threshold_default="0.3"
+starting_layer_default="10"
+ending_layer_default="16"
+retracing_ratio_default="0.12"
+max_new_tokens_default="2"
+
+# -----------------------------------------------------------------------------
+# Resolve parameters (CLI/env override default)
+# -----------------------------------------------------------------------------
+mme_root="${mme_root:-${MME_ROOT:-$mme_root_default}}"
+model_name="${model_name:-${MODEL_NAME:-$model_name_default}}"
+model_path="${model_path:-${MODEL_PATH:-$model_path_default}}"
+run_tag="${mme_run_tag:-${MME_RUN_TAG:-}}"
+
+# Normalize paths once so later `cd` does not affect path resolution.
+if [[ "$mme_root" != /* ]]; then
+    mme_root="$root_dir/$mme_root"
+fi
+if [[ "$model_path" != /* ]]; then
+    model_path="$root_dir/$model_path"
+fi
+
+if [[ "$mode" != "memvr" && "$mode" != "none" ]]; then
+    echo "Invalid mode: $mode"
     echo "Usage: bash qwen25/scripts/mme.sh [memvr|none] [num_gpus] [gpu_ids_csv]"
     exit 1
 fi
 
-if ! [[ "$NUM_GPUS" =~ ^[0-9]+$ ]] || [[ "$NUM_GPUS" -lt 1 ]]; then
-    echo "Invalid num_gpus: $NUM_GPUS"
+if ! [[ "$num_gpus" =~ ^[0-9]+$ ]] || [[ "$num_gpus" -lt 1 ]]; then
+    echo "Invalid num_gpus: $num_gpus"
     exit 1
 fi
 
-MODEL_NAME="Qwen2.5-VL"
-MODEL_PATH="/mnt/data/ssz/llms/Qwen2.5-VL-7B-Instruct"
-RUN_TAG="${MME_RUN_TAG:-}"
-if [[ -n "$RUN_TAG" ]]; then
-    RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE/$RUN_TAG"
+if [[ -n "$run_tag" ]]; then
+    results_root="$root_dir/results/$model_name/mme/$mode/$run_tag"
 else
-    RESULTS_ROOT="$ROOT_DIR/results/$MODEL_NAME/mme/$MODE"
+    results_root="$root_dir/results/$model_name/mme/$mode"
 fi
-ANSWERS_FILE="$RESULTS_ROOT/answers.jsonl"
-EVAL_RESULTS_DIR="$RESULTS_ROOT/eval_answers"
-if [[ "$MODE" == "memvr" ]]; then
-    APPLY_MEMVR="memvr"
+answers_file="$results_root/answers.jsonl"
+eval_results_dir="$results_root/eval_answers"
+
+if [[ "$mode" == "memvr" ]]; then
+    apply_memvr="memvr"
 else
-    APPLY_MEMVR="none"
+    apply_memvr="none"
 fi
 
-if [[ -n "${ENTROPY_THRESHOLD:-}" ]]; then
-    ENTROPY_THRESHOLD_VALUE="$ENTROPY_THRESHOLD"
-elif [[ "$NUM_GPUS" -eq 1 ]]; then
-    ENTROPY_THRESHOLD_VALUE="0.65"
-else
-    ENTROPY_THRESHOLD_VALUE="0.75"
+entropy_threshold="${entropy_threshold:-${ENTROPY_THRESHOLD:-}}"
+starting_layer="${starting_layer:-${STARTING_LAYER:-}}"
+ending_layer="${ending_layer:-${ENDING_LAYER:-}}"
+retracing_ratio="${retracing_ratio:-${RETRACING_RATIO:-$retracing_ratio_default}}"
+max_new_tokens="${max_new_tokens:-${MAX_NEW_TOKENS:-$max_new_tokens_default}}"
+
+if [[ -z "$entropy_threshold" ]]; then
+    entropy_threshold="$entropy_threshold_default"
 fi
 
-if [[ -n "${STARTING_LAYER:-}" ]]; then
-    STARTING_LAYER_VALUE="$STARTING_LAYER"
-elif [[ "$NUM_GPUS" -eq 1 ]]; then
-    STARTING_LAYER_VALUE="8"
-else
-    STARTING_LAYER_VALUE="10"
+if [[ -z "$starting_layer" ]]; then
+    starting_layer="$starting_layer_default"
 fi
 
-if [[ -n "${ENDING_LAYER:-}" ]]; then
-    ENDING_LAYER_VALUE="$ENDING_LAYER"
-else
-    ENDING_LAYER_VALUE="16"
+if [[ -z "$ending_layer" ]]; then
+    ending_layer="$ending_layer_default"
 fi
 
-RETRACING_RATIO_VALUE="${RETRACING_RATIO:-0.25}"
-MAX_NEW_TOKENS_VALUE="${MAX_NEW_TOKENS:-2}"
+mkdir -p "$results_root"
 
-mkdir -p "$RESULTS_ROOT"
+echo "[MME] mode=$mode"
+echo "[MME] num_gpus=$num_gpus"
+echo "[MME] run_tag=${run_tag:-none}"
+echo "[MME] entropy_threshold=$entropy_threshold"
+echo "[MME] starting_layer=$starting_layer"
+echo "[MME] ending_layer=$ending_layer"
+echo "[MME] retracing_ratio=$retracing_ratio"
+echo "[MME] max_new_tokens=$max_new_tokens"
+echo "[MME] model_path=$model_path"
+echo "[MME] answers_file=$answers_file"
 
-echo "[MME] mode=$MODE"
-echo "[MME] num_gpus=$NUM_GPUS"
-echo "[MME] run_tag=${RUN_TAG:-none}"
-echo "[MME] entropy_threshold=$ENTROPY_THRESHOLD_VALUE"
-echo "[MME] starting_layer=$STARTING_LAYER_VALUE"
-echo "[MME] ending_layer=$ENDING_LAYER_VALUE"
-echo "[MME] answers_file=$ANSWERS_FILE"
+base_question_file="$mme_root/llava_mme.jsonl"
+tmp_dir="$results_root/.tmp_${mode}_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$tmp_dir"
+question_file="$base_question_file"
 
-BASE_QUESTION_FILE="$MME_ROOT/llava_mme.jsonl"
-TMP_DIR="$RESULTS_ROOT/.tmp_${MODE}_$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$TMP_DIR"
-QUESTION_FILE="$BASE_QUESTION_FILE"
-
-EXPECTED_COUNT=$(wc -l < "$QUESTION_FILE")
-if [[ "$EXPECTED_COUNT" -eq 0 ]]; then
+expected_count=$(wc -l < "$question_file")
+if [[ "$expected_count" -eq 0 ]]; then
     echo "[MME] no samples to run"
     exit 1
 fi
 
-if [[ -n "$GPU_IDS_CSV" ]]; then
-    IFS=',' read -r -a GPU_IDS <<< "$GPU_IDS_CSV"
+if [[ -n "$gpu_ids_csv" ]]; then
+    IFS=',' read -r -a gpu_ids <<< "$gpu_ids_csv"
 else
-    GPU_IDS=()
-    for ((i=0; i<NUM_GPUS; i++)); do
-        GPU_IDS+=("$i")
+    gpu_ids=()
+    for ((i=0; i<num_gpus; i++)); do
+        gpu_ids+=("$i")
     done
 fi
 
-if [[ "${#GPU_IDS[@]}" -lt "$NUM_GPUS" ]]; then
+if [[ "${#gpu_ids[@]}" -lt "$num_gpus" ]]; then
     echo "[MME] provided gpu ids fewer than num_gpus"
     exit 1
 fi
 
-echo "[MME] question_file=$QUESTION_FILE"
-echo "[MME] expected_count=$EXPECTED_COUNT"
-echo "[MME] gpu_ids=${GPU_IDS[*]}"
+echo "[MME] question_file=$question_file"
+echo "[MME] expected_count=$expected_count"
+echo "[MME] gpu_ids=${gpu_ids[*]}"
 
-rm -f "$ANSWERS_FILE"
+rm -f "$answers_file"
 
-if [[ "$NUM_GPUS" -eq 1 ]]; then
-    CUDA_VISIBLE_DEVICES="${GPU_IDS[0]}" python -m qwen25.qwen_eval \
-        --model-path "$MODEL_PATH" \
-        --question-file "$QUESTION_FILE" \
-        --image-folder "$MME_ROOT/MME_Benchmark_release_version" \
-        --answers-file "$ANSWERS_FILE" \
+if [[ "$num_gpus" -eq 1 ]]; then
+    CUDA_VISIBLE_DEVICES="${gpu_ids[0]}" python -m qwen25.qwen_eval \
+        --model-path "$model_path" \
+        --question-file "$question_file" \
+        --image-folder "$mme_root/MME_Benchmark_release_version" \
+        --answers-file "$answers_file" \
         --temperature 0.1 \
         --cuda-device 'cuda:0' \
-        --apply-memvr "$APPLY_MEMVR" \
-        --retracing-ratio "$RETRACING_RATIO_VALUE" \
-        --entropy-threshold "$ENTROPY_THRESHOLD_VALUE" \
-        --max-new-tokens "$MAX_NEW_TOKENS_VALUE" \
-        --starting-layer "$STARTING_LAYER_VALUE" \
-        --ending-layer "$ENDING_LAYER_VALUE" \
+        --apply-memvr "$apply_memvr" \
+        --retracing-ratio "$retracing_ratio" \
+        --entropy-threshold "$entropy_threshold" \
+        --max-new-tokens "$max_new_tokens" \
+        --starting-layer "$starting_layer" \
+        --ending-layer "$ending_layer" \
         --num-chunks 1 \
         --chunk-idx 0
 else
-    PIDS=()
-    PART_FILES=()
-    for ((chunk_idx=0; chunk_idx<NUM_GPUS; chunk_idx++)); do
-        gpu_id="${GPU_IDS[$chunk_idx]}"
-        part_file="$TMP_DIR/chunk_${chunk_idx}.jsonl"
-        PART_FILES+=("$part_file")
+    pids=()
+    part_files=()
+    for ((chunk_idx=0; chunk_idx<num_gpus; chunk_idx++)); do
+        gpu_id="${gpu_ids[$chunk_idx]}"
+        part_file="$tmp_dir/chunk_${chunk_idx}.jsonl"
+        part_files+=("$part_file")
         echo "[MME] launch chunk=$chunk_idx gpu=$gpu_id -> $part_file"
         CUDA_VISIBLE_DEVICES="$gpu_id" python -m qwen25.qwen_eval \
-            --model-path "$MODEL_PATH" \
-            --question-file "$QUESTION_FILE" \
-            --image-folder "$MME_ROOT/MME_Benchmark_release_version" \
+            --model-path "$model_path" \
+            --question-file "$question_file" \
+            --image-folder "$mme_root/MME_Benchmark_release_version" \
             --answers-file "$part_file" \
             --temperature 0 \
             --cuda-device 'cuda:0' \
-            --apply-memvr "$APPLY_MEMVR" \
-            --retracing-ratio "$RETRACING_RATIO_VALUE" \
-            --entropy-threshold "$ENTROPY_THRESHOLD_VALUE" \
-            --max-new-tokens "$MAX_NEW_TOKENS_VALUE" \
-            --starting-layer "$STARTING_LAYER_VALUE" \
-            --ending-layer "$ENDING_LAYER_VALUE" \
-            --num-chunks "$NUM_GPUS" \
+            --apply-memvr "$apply_memvr" \
+            --retracing-ratio "$retracing_ratio" \
+            --entropy-threshold "$entropy_threshold" \
+            --max-new-tokens "$max_new_tokens" \
+            --starting-layer "$starting_layer" \
+            --ending-layer "$ending_layer" \
+            --num-chunks "$num_gpus" \
             --chunk-idx "$chunk_idx" &
-        PIDS+=("$!")
+        pids+=("$!")
     done
 
-    for pid in "${PIDS[@]}"; do
+    for pid in "${pids[@]}"; do
         wait "$pid"
     done
 
-    : > "$ANSWERS_FILE"
-    for part_file in "${PART_FILES[@]}"; do
-        cat "$part_file" >> "$ANSWERS_FILE"
+    : > "$answers_file"
+    for part_file in "${part_files[@]}"; do
+        cat "$part_file" >> "$answers_file"
     done
 fi
 
-ACTUAL_COUNT=$(wc -l < "$ANSWERS_FILE")
-echo "[MME] actual_count=$ACTUAL_COUNT"
-if [[ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ]]; then
-    echo "[MME] mismatch count expected=$EXPECTED_COUNT actual=$ACTUAL_COUNT"
-    echo "[MME] keep tmp dir for debugging: $TMP_DIR"
+actual_count=$(wc -l < "$answers_file")
+echo "[MME] actual_count=$actual_count"
+if [[ "$actual_count" -ne "$expected_count" ]]; then
+    echo "[MME] mismatch count expected=$expected_count actual=$actual_count"
+    echo "[MME] keep tmp dir for debugging: $tmp_dir"
     exit 1
 fi
 
-# convert_answer_to_mme.py expects the canonical layout under $MME_ROOT.
-if [[ -n "$RUN_TAG" ]]; then
-    EXPERIMENT="$MODEL_NAME/$MODE/$RUN_TAG"
+# convert_answer_to_mme.py expects the canonical layout under $mme_root.
+if [[ -n "$run_tag" ]]; then
+    experiment="$model_name/$mode/$run_tag"
 else
-    EXPERIMENT="$MODEL_NAME/$MODE"
+    experiment="$model_name/$mode"
 fi
-MME_ANSWERS_FILE="$MME_ROOT/answers/${EXPERIMENT}.jsonl"
-mkdir -p "$(dirname "$MME_ANSWERS_FILE")"
-cp "$ANSWERS_FILE" "$MME_ANSWERS_FILE"
+mme_answers_file="$mme_root/answers/${experiment}.jsonl"
+mkdir -p "$(dirname "$mme_answers_file")"
+cp "$answers_file" "$mme_answers_file"
 
-echo "$EXPERIMENT"
-cd "$MME_ROOT"
-python convert_answer_to_mme.py --experiment "$EXPERIMENT"
+echo "$experiment"
+cd "$mme_root"
+python convert_answer_to_mme.py --experiment "$experiment"
 
-rm -rf "$EVAL_RESULTS_DIR"
-mkdir -p "$(dirname "$EVAL_RESULTS_DIR")"
-cp -r "$MME_ROOT/eval_tool/answers/${EXPERIMENT}" "$EVAL_RESULTS_DIR"
+rm -rf "$eval_results_dir"
+mkdir -p "$(dirname "$eval_results_dir")"
+cp -r "$mme_root/eval_tool/answers/${experiment}" "$eval_results_dir"
 
 cd eval_tool
-python calculation.py --results_dir "$EVAL_RESULTS_DIR"
+python calculation.py --results_dir "$eval_results_dir"

@@ -86,6 +86,7 @@ class LlamaMLP(nn.Module):
 
 
     def forward(self, x):
+        ipdb.set_trace()
         if self.config.pretraining_tp > 1:
             slice = self.intermediate_size // self.config.pretraining_tp
             gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
@@ -841,6 +842,7 @@ def qwen_model_forward(
         attentions=all_self_attns,
     )
     
+import ipdb
 def apply_memvr_llama(
         self,
         starting_layer: int,
@@ -917,18 +919,26 @@ def apply_memvr_qwen25(
     # Qwen2.5-VL MemVR logic is directly implemented in modeling_qwen2_5_vl.py.
     self.model.language_model.lm_head = self.lm_head
 
-    num_layers = len(self.model.language_model.layers)
-    for layer in range(num_layers):
-        mlp = self.model.language_model.layers[layer].mlp
-        mlp.apply_memvr = True
-        mlp.starting_layer = starting_layer
-        mlp.ending_layer = ending_layer
-        mlp.entropy_threshold = entropy_threshold
-        mlp.retracing_ratio = retracing_ratio
-        mlp.vision_retracing_method = "adapt"
-        mlp.vision_retracing_sign = False
-        mlp.vision_retracing_event = False
-        mlp.vision_token = None
-        mlp.adpt_sign = 0
-        mlp.adpt_w1 = None
-        mlp.adpt_w2 = None
+    self.model.language_model.layers[0].mlp.apply_memvr = True
+    self.model.language_model.layers[0].mlp.starting_layer = starting_layer
+    self.model.language_model.layers[0].mlp.ending_layer = ending_layer
+    self.model.language_model.layers[0].mlp.entropy_threshold = entropy_threshold
+    for layer in range(28):
+        self.model.language_model.layers[layer].mlp.retracing_ratio = retracing_ratio
+        
+
+    # num_layers = len(self.model.language_model.layers)
+    # for layer in range(num_layers):
+    #     mlp = self.model.language_model.layers[layer].mlp
+    #     mlp.apply_memvr = True
+    #     mlp.starting_layer = starting_layer
+    #     mlp.ending_layer = ending_layer
+    #     mlp.entropy_threshold = entropy_threshold
+    #     mlp.retracing_ratio = retracing_ratio
+    #     mlp.vision_retracing_method = "adapt"
+    #     mlp.vision_retracing_sign = False
+    #     mlp.vision_retracing_event = False
+    #     mlp.vision_token = None
+    #     mlp.adpt_sign = 0
+    #     mlp.adpt_w1 = None
+    #     mlp.adpt_w2 = None

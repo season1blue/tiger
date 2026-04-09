@@ -960,6 +960,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         past_key_values: Cache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
+        image_token_mask: torch.BoolTensor | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -1023,6 +1024,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_list = []
         apply_memvr = self.layers[0].mlp.apply_memvr
         visual_token = self.layers[0].mlp.visual_token
+        dynamic_visual_token = visual_token
         
         retracing_ratio = self.layers[0].mlp.retracing_ratio
         entropy_threshold = self.layers[0].mlp.entropy_threshold
@@ -1046,6 +1048,10 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 **kwargs,
             )
 
+            # Refresh visual token from the previous layer's image-token hidden states.
+            if image_token_mask is not None:
+                dynamic_visual_token = hidden_states[image_token_mask]
+
             if not apply_memvr or not hasattr(self, "lm_head"):
                 layer += 1
                 continue
@@ -1065,20 +1071,20 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
 
                 current_mlp = self.layers[layer].mlp
                 current_mlp.adpt_sign = 0
-                if visual_token is not None:
-                    current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(visual_token))
-                    current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(visual_token.T))
+                if dynamic_visual_token is not None:
+                    current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(dynamic_visual_token))
+                    current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(dynamic_visual_token.T))
                 else:
                     current_mlp.adpt_w1 = None
                     current_mlp.adpt_w2 = None
                 vision_retracing_sign = False
-                # print("\n added visual token with adatption channel at layer ", layer)
+                print("\n added visual token with adatption channel at layer ", layer)
             
             # print(f"Layer {layer}: entropy {entropy_value:.4f}, threshold {entropy_threshold}, visual token {visual_token is not None}, visual retracing event {visual_retracing_event}, starting layer {starting_layer}, ending layer {ending_layer}")
             if (
                 entropy_value > entropy_threshold
                 and not visual_retracing_event
-                and visual_token is not None
+                and dynamic_visual_token is not None
                 and layer > starting_layer
                 and layer < ending_layer
                 and layer + 1 < len(self.layers)
@@ -1089,7 +1095,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 next_mlp = self.layers[layer + 1].mlp
                 next_mlp.adpt_sign = 1
 
-                adapter_seed = visual_token
+                adapter_seed = dynamic_visual_token
                 if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
                     adapter_seed = adapter_seed[0]
                 if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
@@ -1504,7 +1510,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
                 vision_token = vision_token[0]
             # Inject into the instantiated first MLP layer for MemVR retracing.
             first_mlp = self.language_model.layers[0].mlp
-            first_mlp.visual_token = vision_token
+            first_mlp.visual_token = vision_token # torch.Size([60, 3584])
         else:
             first_mlp = self.language_model.layers[0].mlp
             first_mlp.visual_token = None
@@ -1520,7 +1526,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
                 past_key_values=past_key_values,
                 mm_token_type_ids=mm_token_type_ids,
             )
-
+            
         outputs = self.language_model(
             input_ids=None,
             position_ids=position_ids,
@@ -1528,6 +1534,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
+            image_token_mask=(input_ids == self.config.image_token_id) if input_ids is not None else None,
             **kwargs,
         )
 
