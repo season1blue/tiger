@@ -10,14 +10,41 @@ cd "$ROOT_DIR"
 #   bash qwen25/scripts/mme_search.sh
 #   bash qwen25/scripts/mme_search.sh memvr
 #   bash qwen25/scripts/mme_search.sh memvr 1
-#   bash qwen25/scripts/mme_search.sh memvr 1 "1"
+#   bash qwen25/scripts/mme_search.sh memvr 2 "0,1" latest --nohup
+#   bash qwen25/scripts/mme_search.sh memvr 1 "" latest
+#   bash qwen25/scripts/mme_search.sh memvr 1 "0,1" latest --nohup
 MODE="${1:-memvr}"
 NUM_GPUS="${2:-1}"
 GPU_IDS_CSV="${3:-}"
+RESUME_RUN_ID=""
+DETACH_NOHUP=0
+
+for arg in "${@:4}"; do
+    case "$arg" in
+        --nohup|nohup)
+            DETACH_NOHUP=1
+            ;;
+        latest)
+            RESUME_RUN_ID="latest"
+            ;;
+        resume=*)
+            RESUME_RUN_ID="${arg#resume=}"
+            ;;
+        *)
+            if [[ -z "$RESUME_RUN_ID" ]]; then
+                RESUME_RUN_ID="$arg"
+            else
+                echo "Unknown extra arg: $arg"
+                echo "Usage: bash qwen25/scripts/mme_search.sh [memvr|none] [num_gpus] [gpu_ids_csv] [latest|RUN_ID|resume=RUN_ID] [--nohup]"
+                exit 1
+            fi
+            ;;
+    esac
+done
 
 if [[ "$MODE" != "memvr" && "$MODE" != "none" ]]; then
     echo "Invalid mode: $MODE"
-    echo "Usage: bash qwen25/scripts/mme_search.sh [memvr|none] [num_gpus] [gpu_ids_csv]"
+    echo "Usage: bash qwen25/scripts/mme_search.sh [memvr|none] [num_gpus] [gpu_ids_csv] [latest|RUN_ID|resume=RUN_ID] [--nohup]"
     exit 1
 fi
 
@@ -28,17 +55,57 @@ fi
 
 SEARCH_ROOT="$ROOT_DIR/results/Qwen2.5-VL/mme_search"
 MME_TMP_ROOT="$ROOT_DIR/results/Qwen2.5-VL/mme"
-RUN_ID="$(date +%Y%m%d_%H%M%S)"
-RUN_DIR="$SEARCH_ROOT/$RUN_ID"
+mkdir -p "$SEARCH_ROOT"
+
+if [[ "$DETACH_NOHUP" -eq 1 && "${MME_SEARCH_NOHUP_LAUNCHED:-0}" != "1" ]]; then
+    nohup_log="$SEARCH_ROOT/nohup_$(date +%Y%m%d_%H%M%S).log"
+    relaunch_cmd=(bash qwen25/scripts/mme_search.sh "$MODE" "$NUM_GPUS")
+    if [[ -n "$GPU_IDS_CSV" ]]; then
+        relaunch_cmd+=("$GPU_IDS_CSV")
+    fi
+    if [[ -n "$RESUME_RUN_ID" ]]; then
+        relaunch_cmd+=("$RESUME_RUN_ID")
+    fi
+
+    MME_SEARCH_NOHUP_LAUNCHED=1 nohup "${relaunch_cmd[@]}" > "$nohup_log" 2>&1 &
+    echo "[SEARCH] detached with nohup"
+    echo "[SEARCH] pid=$!"
+    echo "[SEARCH] nohup_log=$nohup_log"
+    exit 0
+fi
+
+if [[ "$RESUME_RUN_ID" == "latest" ]]; then
+    latest_dir="$(ls -1dt "$SEARCH_ROOT"/*/ 2>/dev/null | head -n 1 || true)"
+    if [[ -z "$latest_dir" ]]; then
+        echo "[SEARCH] resume latest requested, but no previous run exists."
+        RUN_ID="$(date +%Y%m%d_%H%M%S)"
+        RUN_DIR="$SEARCH_ROOT/$RUN_ID"
+    else
+        latest_dir="${latest_dir%/}"
+        RUN_DIR="$latest_dir"
+        RUN_ID="$(basename "$RUN_DIR")"
+        echo "[SEARCH] resuming latest run_id=$RUN_ID"
+    fi
+elif [[ -n "$RESUME_RUN_ID" ]]; then
+    RUN_ID="$RESUME_RUN_ID"
+    RUN_DIR="$SEARCH_ROOT/$RUN_ID"
+    echo "[SEARCH] resuming run_id=$RUN_ID"
+else
+    RUN_ID="$(date +%Y%m%d_%H%M%S)"
+    RUN_DIR="$SEARCH_ROOT/$RUN_ID"
+fi
+
 LOG_DIR="$RUN_DIR/logs"
 SUMMARY_FILE="$RUN_DIR/summary.tsv"
 COMBINED_LOG="$RUN_DIR/combined.log"
 
 mkdir -p "$LOG_DIR"
 
-{
-    echo -e "entropy_threshold\tstarting_layer\tending_layer\tstatus\tkey_result\tlog_file"
-} > "$SUMMARY_FILE"
+if [[ ! -f "$SUMMARY_FILE" ]]; then
+    {
+        echo -e "entropy_threshold\tstarting_layer\tending_layer\tstatus\tkey_result\tlog_file"
+    } > "$SUMMARY_FILE"
+fi
 
 echo "[SEARCH] mode=$MODE"
 echo "[SEARCH] num_gpus=$NUM_GPUS"
@@ -52,20 +119,47 @@ rm -rf "$MME_TMP_ROOT"
 {
     echo "[SEARCH] start_time=$(date '+%F %T')"
     echo "[SEARCH] mode=$MODE num_gpus=$NUM_GPUS gpu_ids_csv=${GPU_IDS_CSV:-auto}"
+    echo "[SEARCH] run_id=$RUN_ID resume=${RESUME_RUN_ID:-none}"
     echo "[SEARCH] summary_file=$SUMMARY_FILE"
     echo ""
-} > "$COMBINED_LOG"
+} >> "$COMBINED_LOG"
 
 total_runs=0
+skipped_runs=0
 ok_runs=0
 fail_runs=0
 
-for entropy in $(awk 'BEGIN { for (v=0.30; v<=0.95+1e-9; v+=0.05) printf "%.2f\n", v }'); do
+declare -A completed_map
+if [[ -f "$SUMMARY_FILE" ]]; then
+    while IFS=$'\t' read -r e s l status _rest; do
+        if [[ "$e" == "entropy_threshold" || -z "$e" || -z "$s" || -z "$l" ]]; then
+            continue
+        fi
+
+        done_key="${e}|${s}|${l}"
+        completed_map["$done_key"]=1
+
+        if [[ "$status" == "ok" ]]; then
+            ok_runs=$((ok_runs + 1))
+        elif [[ "$status" == "fail" ]]; then
+            fail_runs=$((fail_runs + 1))
+        fi
+    done < "$SUMMARY_FILE"
+fi
+
+for entropy in $(awk 'BEGIN { for (v=0.35; v<=0.95+1e-9; v+=0.05) printf "%.2f\n", v }'); do
     for starting_layer in $(seq 2 10); do
         for ending_layer in $(seq 16 28); do
             total_runs=$((total_runs + 1))
             run_tag="et${entropy}_s${starting_layer}_e${ending_layer}"
             log_file="$LOG_DIR/${run_tag}.log"
+
+            done_key="${entropy}|${starting_layer}|${ending_layer}"
+            if [[ -n "${completed_map[$done_key]:-}" ]]; then
+                skipped_runs=$((skipped_runs + 1))
+                echo "[SEARCH] ($total_runs) skip entropy=$entropy start=$starting_layer end=$ending_layer"
+                continue
+            fi
 
             echo "[SEARCH] ($total_runs) entropy=$entropy start=$starting_layer end=$ending_layer"
 
@@ -114,6 +208,6 @@ for entropy in $(awk 'BEGIN { for (v=0.30; v<=0.95+1e-9; v+=0.05) printf "%.2f\n
 done
 
 echo "[SEARCH] done"
-echo "[SEARCH] total_runs=$total_runs ok_runs=$ok_runs fail_runs=$fail_runs"
+echo "[SEARCH] total_runs=$total_runs ok_runs=$ok_runs fail_runs=$fail_runs skipped_runs=$skipped_runs"
 echo "[SEARCH] summary_file=$SUMMARY_FILE"
 echo "[SEARCH] combined_log=$COMBINED_LOG"
