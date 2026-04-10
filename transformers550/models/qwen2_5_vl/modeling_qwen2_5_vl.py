@@ -110,6 +110,7 @@ class Qwen2_5_VLMLP(nn.Module):
         self.entropy_threshold = 1
         self.starting_layer = 0
         self.ending_layer = 0
+        self.retrace_delay_layers = 1
         self.adpt_sign = 0
         self.adpt_w1 = None
         self.adpt_w2 = None
@@ -1036,8 +1037,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_threshold = self.layers[0].mlp.entropy_threshold
         starting_layer = self.layers[0].mlp.starting_layer
         ending_layer = self.layers[0].mlp.ending_layer
+        retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
         visual_retracing_event = False # to prevent multiple retracing event
-        vision_retracing_sign  = False # to decide whether to add visual token in the next layer
+        pending_reset_layer = -1
 
         layer = 0
         entropy_list = []
@@ -1055,8 +1057,8 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             )
 
             # Refresh visual token from the previous layer's image-token hidden states.
-            if image_token_mask is not None:
-                dynamic_visual_token = hidden_states[image_token_mask]
+            # if image_token_mask is not None:
+            #     dynamic_visual_token = hidden_states[image_token_mask]
 
             if not apply_memvr or not hasattr(self, "lm_head"):
                 layer += 1
@@ -1073,8 +1075,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
             entropy_value = float(entropy.item())
 
-            if vision_retracing_sign == True:
-
+            if layer == pending_reset_layer:
                 current_mlp = self.layers[layer].mlp
                 current_mlp.adpt_sign = 0
                 if dynamic_visual_token is not None:
@@ -1083,7 +1084,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 else:
                     current_mlp.adpt_w1 = None
                     current_mlp.adpt_w2 = None
-                vision_retracing_sign = False
+                pending_reset_layer = -1
                 print("\n added visual token with adatption channel at layer ", layer)
             
             # print(f"Layer {layer}: entropy {entropy_value:.4f}, threshold {entropy_threshold}, visual token {visual_token is not None}, visual retracing event {visual_retracing_event}, starting layer {starting_layer}, ending layer {ending_layer}")
@@ -1093,16 +1094,16 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 and dynamic_visual_token is not None
                 and layer > starting_layer
                 and layer < ending_layer
-                and layer + 1 < len(self.layers)
+                and layer + retrace_delay_layers < len(self.layers)
             ):  
-                vision_retracing_sign = True
                 visual_retracing_event = True
                 self._memvr_last_triggered = True
-                self._memvr_last_trigger_layer = layer
+                self._memvr_last_trigger_layer = layer + retrace_delay_layers
                 self._memvr_trigger_total += 1
 
-                next_mlp = self.layers[layer + 1].mlp
+                next_mlp = self.layers[layer + retrace_delay_layers].mlp
                 next_mlp.adpt_sign = 1
+                pending_reset_layer = layer + retrace_delay_layers
 
                 adapter_seed = dynamic_visual_token
                 if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:

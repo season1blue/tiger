@@ -25,9 +25,10 @@ model_name_default="Qwen2.5-VL"
 model_path_default="../llms/Qwen2.5-VL-7B-Instruct"
 
 entropy_threshold_default="0.75"
-starting_layer_default="10"
+starting_layer_default="5"
 ending_layer_default="16"
 retracing_ratio_default="0.12"
+retrace_delay_layers_default="1"
 max_new_tokens_default="2"
 
 # -----------------------------------------------------------------------------
@@ -75,6 +76,7 @@ entropy_threshold="${entropy_threshold:-${ENTROPY_THRESHOLD:-}}"
 starting_layer="${starting_layer:-${STARTING_LAYER:-}}"
 ending_layer="${ending_layer:-${ENDING_LAYER:-}}"
 retracing_ratio="${retracing_ratio:-${RETRACING_RATIO:-$retracing_ratio_default}}"
+retrace_delay_layers="${retrace_delay_layers:-${RETRACE_DELAY_LAYERS:-$retrace_delay_layers_default}}"
 max_new_tokens="${max_new_tokens:-${MAX_NEW_TOKENS:-$max_new_tokens_default}}"
 
 if [[ -z "$entropy_threshold" ]]; then
@@ -98,6 +100,7 @@ echo "[MME] entropy_threshold=$entropy_threshold"
 echo "[MME] starting_layer=$starting_layer"
 echo "[MME] ending_layer=$ending_layer"
 echo "[MME] retracing_ratio=$retracing_ratio"
+echo "[MME] retrace_delay_layers=$retrace_delay_layers"
 echo "[MME] max_new_tokens=$max_new_tokens"
 echo "[MME] model_path=$model_path"
 echo "[MME] answers_file=$answers_file"
@@ -143,6 +146,7 @@ if [[ "$num_gpus" -eq 1 ]]; then
         --cuda-device 'cuda:0' \
         --apply-memvr "$apply_memvr" \
         --retracing-ratio "$retracing_ratio" \
+        --retrace-delay-layers "$retrace_delay_layers" \
         --entropy-threshold "$entropy_threshold" \
         --max-new-tokens "$max_new_tokens" \
         --starting-layer "$starting_layer" \
@@ -166,6 +170,7 @@ else
             --cuda-device 'cuda:0' \
             --apply-memvr "$apply_memvr" \
             --retracing-ratio "$retracing_ratio" \
+            --retrace-delay-layers "$retrace_delay_layers" \
             --entropy-threshold "$entropy_threshold" \
             --max-new-tokens "$max_new_tokens" \
             --starting-layer "$starting_layer" \
