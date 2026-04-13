@@ -31,7 +31,7 @@ retracing_ratio_default="0.12"      # Retrace strength ratio used by MemVR.
 retrace_delay_layers_default="1"    # Delay from trigger layer to actual injection layer.
 retrace_target_layers_default=""  # Explicit target layer(s), e.g. "12" or "8,12,16". “” means using entropy-based trigger without fixed target layers.
 use_state_drift_trigger_default="1" # 1 enables state-drift trigger; 0 falls back to entropy trigger.
-state_drift_threshold_default="0.5" # Trigger threshold for state drift score.
+state_drift_threshold_default="0.7" # Trigger threshold for state drift score.
 state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
 max_new_tokens_default="2"          # Max generated tokens per sample.
 
