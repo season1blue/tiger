@@ -916,6 +916,7 @@ def apply_memvr_qwen25(
         entropy_threshold: float,
     retracing_ratio: float,
     retrace_delay_layers: int = 1,
+    retrace_target_layers: str = "",
     ):
     # Qwen2.5-VL MemVR logic is directly implemented in modeling_qwen2_5_vl.py.
     self.model.language_model.lm_head = self.lm_head
@@ -925,6 +926,7 @@ def apply_memvr_qwen25(
     self.model.language_model.layers[0].mlp.ending_layer = ending_layer
     self.model.language_model.layers[0].mlp.entropy_threshold = entropy_threshold
     self.model.language_model.layers[0].mlp.retrace_delay_layers = max(1, int(retrace_delay_layers))
+    self.model.language_model.layers[0].mlp.retrace_target_layers = retrace_target_layers
     for layer in range(28):
         self.model.language_model.layers[layer].mlp.retracing_ratio = retracing_ratio
         

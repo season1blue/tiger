@@ -890,6 +890,7 @@ class Qwen2MLP(nn.Module):
         self.entropy_threshold = 1
         self.starting_layer = 0
         self.ending_layer = 0
+        self.retrace_target_layers = ""
         self.adpt_sign = 0
         self.adpt_w1 = None
         self.adpt_w2 = None
@@ -1038,6 +1039,13 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         starting_layer = self.layers[0].mlp.starting_layer
         ending_layer = self.layers[0].mlp.ending_layer
         retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
+        retrace_target_layers_raw = str(getattr(self.layers[0].mlp, "retrace_target_layers", "") or "").strip()
+        retrace_target_layers = {
+            int(v.strip())
+            for v in retrace_target_layers_raw.split(",")
+            if v.strip() and v.strip().lstrip("-").isdigit()
+        }
+        use_explicit_layers = len(retrace_target_layers) > 0
         visual_retracing_event = False # to prevent multiple retracing event
         pending_reset_layer = -1
 
@@ -1045,6 +1053,36 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_list = []
 
         for decoder_layer in self.layers:
+
+            if use_explicit_layers and layer in retrace_target_layers and dynamic_visual_token is not None:
+                current_mlp = self.layers[layer].mlp
+                current_mlp.adpt_sign = 1
+
+                adapter_seed = dynamic_visual_token
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                cur_w1_seed = _fit_tensor_to_shape(adapter_seed, current_mlp.gate_proj.weight.shape)
+                cur_w2_seed = _fit_tensor_to_shape(adapter_seed, current_mlp.up_proj.weight.shape)
+                current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(cur_w1_seed))
+                current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(cur_w2_seed))
+
+                scale_w1 = torch.mean(torch.abs(current_mlp.gate_proj.weight)) / (
+                    torch.mean(torch.abs(cur_w1_seed)) + 1e-6
+                )
+                scale_w2 = torch.mean(torch.abs(current_mlp.up_proj.weight)) / (
+                    torch.mean(torch.abs(cur_w2_seed)) + 1e-6
+                )
+                current_mlp.adpt_w1 += scale_w1 * cur_w1_seed
+                current_mlp.adpt_w2 += scale_w2 * cur_w2_seed
+                current_mlp.retracing_ratio = retracing_ratio
+
+                self._memvr_last_triggered = True
+                self._memvr_last_trigger_layer = layer
+                self._memvr_trigger_total += 1
 
             hidden_states = decoder_layer(
                 hidden_states,
@@ -1086,9 +1124,18 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                     current_mlp.adpt_w2 = None
                 pending_reset_layer = -1
                 print("\n added visual token with adatption channel at layer ", layer)
+
+            if use_explicit_layers and layer in retrace_target_layers:
+                current_mlp = self.layers[layer].mlp
+                current_mlp.adpt_sign = 0
+                current_mlp.adpt_w1 = None
+                current_mlp.adpt_w2 = None
+                print("\n added visual token with adatption channel at layer ", layer)
             
             # print(f"Layer {layer}: entropy {entropy_value:.4f}, threshold {entropy_threshold}, visual token {visual_token is not None}, visual retracing event {visual_retracing_event}, starting layer {starting_layer}, ending layer {ending_layer}")
             if (
+                not use_explicit_layers
+                and
                 entropy_value > entropy_threshold
                 and not visual_retracing_event
                 and dynamic_visual_token is not None

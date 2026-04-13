@@ -65,6 +65,7 @@ def load_qwen_model(args):
             entropy_threshold=args.entropy_threshold,
             retracing_ratio=args.retracing_ratio,
             retrace_delay_layers=args.retrace_delay_layers,
+            retrace_target_layers=args.retrace_target_layers,
         )
     else:
         model.model.language_model.layers[0].mlp.apply_memvr = False
@@ -243,6 +244,7 @@ def build_parser():
     parser.add_argument("--vision-retracing", type=str, default="default")
     parser.add_argument("--retracing-ratio", type=float, default=0.0)
     parser.add_argument("--retrace-delay-layers", type=int, default=1)
+    parser.add_argument("--retrace-target-layers", type=str, default="")
     parser.add_argument("--entropy-threshold", type=float, default=0.75)
     parser.add_argument("--starting-layer", type=int, default=5)
     parser.add_argument("--ending-layer", type=int, default=16)
