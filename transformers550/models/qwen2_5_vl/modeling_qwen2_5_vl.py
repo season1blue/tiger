@@ -891,6 +891,9 @@ class Qwen2MLP(nn.Module):
         self.starting_layer = 0
         self.ending_layer = 0
         self.retrace_target_layers = ""
+        self.use_state_drift_trigger = False
+        self.state_drift_threshold = 0.5
+        self.state_drift_pooling = "mean"
         self.adpt_sign = 0
         self.adpt_w1 = None
         self.adpt_w2 = None
@@ -1038,6 +1041,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_threshold = self.layers[0].mlp.entropy_threshold
         starting_layer = self.layers[0].mlp.starting_layer
         ending_layer = self.layers[0].mlp.ending_layer
+        use_state_drift_trigger = bool(getattr(self.layers[0].mlp, "use_state_drift_trigger", False))
+        state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
+        state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
         retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
         retrace_target_layers_raw = str(getattr(self.layers[0].mlp, "retrace_target_layers", "") or "").strip()
         retrace_target_layers = {
@@ -1048,6 +1054,10 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         use_explicit_layers = len(retrace_target_layers) > 0
         visual_retracing_event = False # to prevent multiple retracing event
         pending_reset_layer = -1
+        prev_prev_img_state = None
+        prev_img_state = None
+        state_drift_score = 0.0
+        state_drift_ready = False
 
         layer = 0
         entropy_list = []
@@ -1094,6 +1104,41 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 **kwargs,
             )
 
+            # Build a per-sample image-state trajectory from current layer hidden states.
+            # We mean-pool image token states per batch item, then monitor direction change
+            # between consecutive update vectors across layers.
+            if image_token_mask is not None and hidden_states.dim() == 3:
+                img_mask = image_token_mask
+                if img_mask.dim() > 2:
+                    img_mask = img_mask.squeeze(-1)
+                if img_mask.dim() == 2 and img_mask.shape[1] == hidden_states.shape[1]:
+                    img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
+                    valid_img_samples = img_mask.any(dim=1)
+                    if valid_img_samples.any():
+                        img_mask_f = img_mask.unsqueeze(-1).to(dtype=hidden_states.dtype)
+                        pooled_img_state = (hidden_states * img_mask_f).sum(dim=1) / img_mask_f.sum(dim=1).clamp_min(1.0)
+
+                        state_drift_ready = False
+                        if prev_img_state is not None and prev_prev_img_state is not None:
+                            v_prev = prev_img_state - prev_prev_img_state
+                            v_curr = pooled_img_state - prev_img_state
+                            cos_sim = F.cosine_similarity(v_curr, v_prev, dim=-1, eps=1e-6)
+                            drift_per_sample = 1.0 - cos_sim
+                            drift_per_sample = torch.where(
+                                valid_img_samples,
+                                drift_per_sample,
+                                torch.zeros_like(drift_per_sample),
+                            )
+
+                            if state_drift_pooling == "max":
+                                state_drift_score = float(drift_per_sample.max().item())
+                            else:
+                                state_drift_score = float(drift_per_sample[valid_img_samples].mean().item())
+                            state_drift_ready = True
+
+                        prev_prev_img_state = prev_img_state
+                        prev_img_state = pooled_img_state
+
             # Refresh visual token from the previous layer's image-token hidden states.
             # if image_token_mask is not None:
             #     dynamic_visual_token = hidden_states[image_token_mask]
@@ -1132,11 +1177,16 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 current_mlp.adpt_w2 = None
                 print("\n added visual token with adatption channel at layer ", layer)
             
-            # print(f"Layer {layer}: entropy {entropy_value:.4f}, threshold {entropy_threshold}, visual token {visual_token is not None}, visual retracing event {visual_retracing_event}, starting layer {starting_layer}, ending layer {ending_layer}")
+            use_legacy_entropy_trigger = not use_state_drift_trigger
+            trigger_hit = False
+            if use_state_drift_trigger:
+                trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
+            else:
+                trigger_hit = entropy_value > entropy_threshold
+
             if (
                 not use_explicit_layers
-                and
-                entropy_value > entropy_threshold
+                and trigger_hit
                 and not visual_retracing_event
                 and dynamic_visual_token is not None
                 and layer > starting_layer
@@ -1174,7 +1224,10 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 next_mlp.adpt_w2 += scale_w2 * next_w2_seed
                 next_mlp.retracing_ratio = retracing_ratio
 
-            entropy_list.append(f"{entropy_value:.3f}")
+            if use_legacy_entropy_trigger:
+                entropy_list.append(f"{entropy_value:.3f}")
+            else:
+                entropy_list.append(f"{state_drift_score:.3f}")
             layer += 1
 
         hidden_states = self.norm(hidden_states)

@@ -20,17 +20,20 @@ gpu_ids_csv="${3:-}"
 # -----------------------------------------------------------------------------
 # Default parameters (edit here)
 # -----------------------------------------------------------------------------
-mme_root_default="../Datasets/MME"
-model_name_default="Qwen2.5-VL"
-model_path_default="../llms/Qwen2.5-VL-7B-Instruct"
+mme_root_default="../Datasets/MME"                  # MME dataset root path.
+model_name_default="Qwen2.5-VL"                     # Name used in results directory layout.
+model_path_default="../llms/Qwen2.5-VL-7B-Instruct" # Model weights path passed to qwen_eval.
 
-entropy_threshold_default="0.75"
-starting_layer_default="5"
-ending_layer_default="16"
-retracing_ratio_default="0.12"
-retrace_delay_layers_default="1"
-retrace_target_layers_default="12"
-max_new_tokens_default="2"
+entropy_threshold_default="0.75"    # Entropy trigger threshold (used when explicit target layers are not set).
+starting_layer_default="5"          # Start layer index for entropy-based trigger checks.
+ending_layer_default="16"           # End layer index for entropy-based trigger checks.
+retracing_ratio_default="0.12"      # Retrace strength ratio used by MemVR.
+retrace_delay_layers_default="1"    # Delay from trigger layer to actual injection layer.
+retrace_target_layers_default=""  # Explicit target layer(s), e.g. "12" or "8,12,16". “” means using entropy-based trigger without fixed target layers.
+use_state_drift_trigger_default="1" # 1 enables state-drift trigger; 0 falls back to entropy trigger.
+state_drift_threshold_default="0.5" # Trigger threshold for state drift score.
+state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
+max_new_tokens_default="2"          # Max generated tokens per sample.
 
 # -----------------------------------------------------------------------------
 # Resolve parameters (CLI/env override default)
@@ -79,6 +82,9 @@ ending_layer="${ending_layer:-${ENDING_LAYER:-}}"
 retracing_ratio="${retracing_ratio:-${RETRACING_RATIO:-$retracing_ratio_default}}"
 retrace_delay_layers="${retrace_delay_layers:-${RETRACE_DELAY_LAYERS:-$retrace_delay_layers_default}}"
 retrace_target_layers="${retrace_target_layers:-${RETRACE_TARGET_LAYERS:-$retrace_target_layers_default}}"
+use_state_drift_trigger="${use_state_drift_trigger:-${USE_STATE_DRIFT_TRIGGER:-$use_state_drift_trigger_default}}"
+state_drift_threshold="${state_drift_threshold:-${STATE_DRIFT_THRESHOLD:-$state_drift_threshold_default}}"
+state_drift_pooling="${state_drift_pooling:-${STATE_DRIFT_POOLING:-$state_drift_pooling_default}}"
 max_new_tokens="${max_new_tokens:-${MAX_NEW_TOKENS:-$max_new_tokens_default}}"
 
 if [[ -z "$entropy_threshold" ]]; then
@@ -104,6 +110,9 @@ echo "[MME] ending_layer=$ending_layer"
 echo "[MME] retracing_ratio=$retracing_ratio"
 echo "[MME] retrace_delay_layers=$retrace_delay_layers"
 echo "[MME] retrace_target_layers=${retrace_target_layers:-none}"
+echo "[MME] use_state_drift_trigger=$use_state_drift_trigger"
+echo "[MME] state_drift_threshold=$state_drift_threshold"
+echo "[MME] state_drift_pooling=$state_drift_pooling"
 echo "[MME] max_new_tokens=$max_new_tokens"
 echo "[MME] model_path=$model_path"
 echo "[MME] answers_file=$answers_file"
@@ -139,6 +148,11 @@ echo "[MME] gpu_ids=${gpu_ids[*]}"
 
 rm -f "$answers_file"
 
+drift_trigger_flag=()
+if [[ "$use_state_drift_trigger" == "1" || "$use_state_drift_trigger" == "true" || "$use_state_drift_trigger" == "True" ]]; then
+    drift_trigger_flag=(--use-state-drift-trigger)
+fi
+
 if [[ "$num_gpus" -eq 1 ]]; then
     CUDA_VISIBLE_DEVICES="${gpu_ids[0]}" python -m qwen25.qwen_eval \
         --model-path "$model_path" \
@@ -151,6 +165,9 @@ if [[ "$num_gpus" -eq 1 ]]; then
         --retracing-ratio "$retracing_ratio" \
         --retrace-delay-layers "$retrace_delay_layers" \
         --retrace-target-layers "$retrace_target_layers" \
+        "${drift_trigger_flag[@]}" \
+        --state-drift-threshold "$state_drift_threshold" \
+        --state-drift-pooling "$state_drift_pooling" \
         --entropy-threshold "$entropy_threshold" \
         --max-new-tokens "$max_new_tokens" \
         --starting-layer "$starting_layer" \
@@ -176,6 +193,9 @@ else
             --retracing-ratio "$retracing_ratio" \
             --retrace-delay-layers "$retrace_delay_layers" \
             --retrace-target-layers "$retrace_target_layers" \
+            "${drift_trigger_flag[@]}" \
+            --state-drift-threshold "$state_drift_threshold" \
+            --state-drift-pooling "$state_drift_pooling" \
             --entropy-threshold "$entropy_threshold" \
             --max-new-tokens "$max_new_tokens" \
             --starting-layer "$starting_layer" \

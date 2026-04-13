@@ -66,6 +66,9 @@ def load_qwen_model(args):
             retracing_ratio=args.retracing_ratio,
             retrace_delay_layers=args.retrace_delay_layers,
             retrace_target_layers=args.retrace_target_layers,
+            use_state_drift_trigger=args.use_state_drift_trigger,
+            state_drift_threshold=args.state_drift_threshold,
+            state_drift_pooling=args.state_drift_pooling,
         )
     else:
         model.model.language_model.layers[0].mlp.apply_memvr = False
@@ -245,6 +248,9 @@ def build_parser():
     parser.add_argument("--retracing-ratio", type=float, default=0.0)
     parser.add_argument("--retrace-delay-layers", type=int, default=1)
     parser.add_argument("--retrace-target-layers", type=str, default="")
+    parser.add_argument("--use-state-drift-trigger", action="store_true", default=False)
+    parser.add_argument("--state-drift-threshold", type=float, default=0.5)
+    parser.add_argument("--state-drift-pooling", type=str, default="mean", choices=["mean", "max"])
     parser.add_argument("--entropy-threshold", type=float, default=0.75)
     parser.add_argument("--starting-layer", type=int, default=5)
     parser.add_argument("--ending-layer", type=int, default=16)
