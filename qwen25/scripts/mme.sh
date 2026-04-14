@@ -24,14 +24,14 @@ mme_root_default="../Datasets/MME"                  # MME dataset root path.
 model_name_default="Qwen2.5-VL"                     # Name used in results directory layout.
 model_path_default="../llms/Qwen2.5-VL-7B-Instruct" # Model weights path passed to qwen_eval.
 
-entropy_threshold_default="0.75"    # Entropy trigger threshold (used when explicit target layers are not set).
-starting_layer_default="5"          # Start layer index for entropy-based trigger checks.
-ending_layer_default="16"           # End layer index for entropy-based trigger checks.
+entropy_threshold_default="0.3"    # Entropy trigger threshold (used when explicit target layers are not set).
+starting_layer_default="8"          # Start layer index for entropy-based trigger checks.
+ending_layer_default="10"           # End layer index for entropy-based trigger checks.
 retracing_ratio_default="0.12"      # Retrace strength ratio used by MemVR.
 retrace_delay_layers_default="1"    # Delay from trigger layer to actual injection layer.
 retrace_target_layers_default=""  # Explicit target layer(s), e.g. "12" or "8,12,16". “” means using entropy-based trigger without fixed target layers.
 use_state_drift_trigger_default="1" # 1 enables state-drift trigger; 0 falls back to entropy trigger.
-state_drift_threshold_default="0.5" # Trigger threshold for state drift score.
+state_drift_threshold_default="0.4" # Trigger threshold for state drift score.
 state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
 max_new_tokens_default="2"          # Max generated tokens per sample.
 

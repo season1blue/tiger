@@ -1140,8 +1140,8 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                         prev_img_state = pooled_img_state
 
             # Refresh visual token from the previous layer's image-token hidden states.
-            # if image_token_mask is not None:
-            #     dynamic_visual_token = hidden_states[image_token_mask]
+            if image_token_mask is not None:
+                dynamic_visual_token = hidden_states[image_token_mask]
 
             if not apply_memvr or not hasattr(self, "lm_head"):
                 layer += 1
