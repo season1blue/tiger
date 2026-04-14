@@ -1182,6 +1182,8 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             if use_state_drift_trigger:
                 trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
             else:
+                print(entropy_value, entropy_threshold)
+                ipdb.set_trace()
                 trigger_hit = entropy_value > entropy_threshold
 
             if (
