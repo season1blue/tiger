@@ -26,7 +26,7 @@ model_path_default="../llms/Qwen2.5-VL-7B-Instruct" # Model weights path passed 
 
 entropy_threshold_default="0.3"    # Entropy trigger threshold (used when explicit target layers are not set).
 starting_layer_default="8"          # Start layer index for entropy-based trigger checks.
-ending_layer_default="10"           # End layer index for entropy-based trigger checks.
+ending_layer_default="9"           # End layer index for entropy-based trigger checks.
 retracing_ratio_default="0.12"      # Retrace strength ratio used by MemVR.
 retrace_delay_layers_default="1"    # Delay from trigger layer to actual injection layer.
 retrace_target_layers_default=""  # Explicit target layer(s), e.g. "12" or "8,12,16". “” means using entropy-based trigger without fixed target layers.
