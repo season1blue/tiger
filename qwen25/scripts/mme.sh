@@ -9,11 +9,10 @@ export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 
 # Usage:
 #   bash qwen25/scripts/mme.sh
-#   bash qwen25/scripts/mme.sh memvr
+#   bash qwen25/scripts/mme.sh base
 #   bash qwen25/scripts/mme.sh memvr 4
-#   bash qwen25/scripts/mme.sh memvr 4 "0,1,2,3"
-#   bash qwen25/scripts/mme.sh memvr 1 "1"
-mode="${1:-memvr}"
+#   bash qwen25/scripts/mme.sh evo 4 "0,1,2,3"
+method="${1:-base}"
 num_gpus="${2:-1}"
 gpu_ids_csv="${3:-}"
 
@@ -24,13 +23,12 @@ mme_root_default="../Datasets/MME"                  # MME dataset root path.
 model_name_default="Qwen2.5-VL"                     # Name used in results directory layout.
 model_path_default="../llms/Qwen2.5-VL-7B-Instruct" # Model weights path passed to qwen_eval.
 
-entropy_threshold_default="0.3"    # Entropy trigger threshold (used when explicit target layers are not set).
+entropy_threshold_default="0.3"    # Entropy trigger threshold (used by memvr mode).
 starting_layer_default="8"          # Start layer index for entropy-based trigger checks.
-ending_layer_default="9"           # End layer index for entropy-based trigger checks.
+ending_layer_default="10"           # End layer index for entropy-based trigger checks.
 retracing_ratio_default="0.12"      # Retrace strength ratio used by MemVR.
 retrace_delay_layers_default="1"    # Delay from trigger layer to actual injection layer.
 retrace_target_layers_default=""  # Explicit target layer(s), e.g. "12" or "8,12,16". “” means using entropy-based trigger without fixed target layers.
-use_state_drift_trigger_default="1" # 1 enables state-drift trigger; 0 falls back to entropy trigger.
 state_drift_threshold_default="0.4" # Trigger threshold for state drift score.
 
 state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
@@ -52,9 +50,9 @@ if [[ "$model_path" != /* ]]; then
     model_path="$root_dir/$model_path"
 fi
 
-if [[ "$mode" != "memvr" && "$mode" != "none" ]]; then
-    echo "Invalid mode: $mode"
-    echo "Usage: bash qwen25/scripts/mme.sh [memvr|none] [num_gpus] [gpu_ids_csv]"
+if [[ "$method" != "base" && "$method" != "memvr" && "$method" != "evo" ]]; then
+    echo "Invalid method: $method"
+    echo "Usage: bash qwen25/scripts/mme.sh [base|memvr|evo] [num_gpus] [gpu_ids_csv]"
     exit 1
 fi
 
@@ -64,18 +62,12 @@ if ! [[ "$num_gpus" =~ ^[0-9]+$ ]] || [[ "$num_gpus" -lt 1 ]]; then
 fi
 
 if [[ -n "$run_tag" ]]; then
-    results_root="$root_dir/results/$model_name/mme/$mode/$run_tag"
+    results_root="$root_dir/results/$model_name/mme/$method/$run_tag"
 else
-    results_root="$root_dir/results/$model_name/mme/$mode"
+    results_root="$root_dir/results/$model_name/mme/$method"
 fi
 answers_file="$results_root/answers.jsonl"
 eval_results_dir="$results_root/eval_answers"
-
-if [[ "$mode" == "memvr" ]]; then
-    apply_memvr="memvr"
-else
-    apply_memvr="none"
-fi
 
 entropy_threshold="${entropy_threshold:-${ENTROPY_THRESHOLD:-}}"
 starting_layer="${starting_layer:-${STARTING_LAYER:-}}"
@@ -83,7 +75,6 @@ ending_layer="${ending_layer:-${ENDING_LAYER:-}}"
 retracing_ratio="${retracing_ratio:-${RETRACING_RATIO:-$retracing_ratio_default}}"
 retrace_delay_layers="${retrace_delay_layers:-${RETRACE_DELAY_LAYERS:-$retrace_delay_layers_default}}"
 retrace_target_layers="${retrace_target_layers:-${RETRACE_TARGET_LAYERS:-$retrace_target_layers_default}}"
-use_state_drift_trigger="${use_state_drift_trigger:-${USE_STATE_DRIFT_TRIGGER:-$use_state_drift_trigger_default}}"
 state_drift_threshold="${state_drift_threshold:-${STATE_DRIFT_THRESHOLD:-$state_drift_threshold_default}}"
 state_drift_pooling="${state_drift_pooling:-${STATE_DRIFT_POOLING:-$state_drift_pooling_default}}"
 max_new_tokens="${max_new_tokens:-${MAX_NEW_TOKENS:-$max_new_tokens_default}}"
@@ -102,7 +93,7 @@ fi
 
 mkdir -p "$results_root"
 
-echo "[MME] mode=$mode"
+echo "[MME] method=$method"
 echo "[MME] num_gpus=$num_gpus"
 echo "[MME] run_tag=${run_tag:-none}"
 echo "[MME] entropy_threshold=$entropy_threshold"
@@ -111,7 +102,6 @@ echo "[MME] ending_layer=$ending_layer"
 echo "[MME] retracing_ratio=$retracing_ratio"
 echo "[MME] retrace_delay_layers=$retrace_delay_layers"
 echo "[MME] retrace_target_layers=${retrace_target_layers:-none}"
-echo "[MME] use_state_drift_trigger=$use_state_drift_trigger"
 echo "[MME] state_drift_threshold=$state_drift_threshold"
 echo "[MME] state_drift_pooling=$state_drift_pooling"
 echo "[MME] max_new_tokens=$max_new_tokens"
@@ -119,7 +109,7 @@ echo "[MME] model_path=$model_path"
 echo "[MME] answers_file=$answers_file"
 
 base_question_file="$mme_root/llava_mme.jsonl"
-tmp_dir="$results_root/.tmp_${mode}_$(date +%Y%m%d_%H%M%S)"
+tmp_dir="$results_root/.tmp_${method}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$tmp_dir"
 question_file="$base_question_file"
 
@@ -149,11 +139,6 @@ echo "[MME] gpu_ids=${gpu_ids[*]}"
 
 rm -f "$answers_file"
 
-drift_trigger_flag=()
-if [[ "$use_state_drift_trigger" == "1" || "$use_state_drift_trigger" == "true" || "$use_state_drift_trigger" == "True" ]]; then
-    drift_trigger_flag=(--use-state-drift-trigger)
-fi
-
 if [[ "$num_gpus" -eq 1 ]]; then
     CUDA_VISIBLE_DEVICES="${gpu_ids[0]}" python -m qwen25.qwen_eval \
         --model-path "$model_path" \
@@ -162,11 +147,10 @@ if [[ "$num_gpus" -eq 1 ]]; then
         --answers-file "$answers_file" \
         --temperature 0.1 \
         --cuda-device 'cuda:0' \
-        --apply-memvr "$apply_memvr" \
+        --method "$method" \
         --retracing-ratio "$retracing_ratio" \
         --retrace-delay-layers "$retrace_delay_layers" \
         --retrace-target-layers "$retrace_target_layers" \
-        "${drift_trigger_flag[@]}" \
         --state-drift-threshold "$state_drift_threshold" \
         --state-drift-pooling "$state_drift_pooling" \
         --entropy-threshold "$entropy_threshold" \
@@ -190,11 +174,10 @@ else
             --answers-file "$part_file" \
             --temperature 0 \
             --cuda-device 'cuda:0' \
-            --apply-memvr "$apply_memvr" \
+            --method "$method" \
             --retracing-ratio "$retracing_ratio" \
             --retrace-delay-layers "$retrace_delay_layers" \
             --retrace-target-layers "$retrace_target_layers" \
-            "${drift_trigger_flag[@]}" \
             --state-drift-threshold "$state_drift_threshold" \
             --state-drift-pooling "$state_drift_pooling" \
             --entropy-threshold "$entropy_threshold" \
@@ -226,9 +209,9 @@ fi
 
 # convert_answer_to_mme.py expects the canonical layout under $mme_root.
 if [[ -n "$run_tag" ]]; then
-    experiment="$model_name/$mode/$run_tag"
+    experiment="$model_name/$method/$run_tag"
 else
-    experiment="$model_name/$mode"
+    experiment="$model_name/$method"
 fi
 mme_answers_file="$mme_root/answers/${experiment}.jsonl"
 mkdir -p "$(dirname "$mme_answers_file")"

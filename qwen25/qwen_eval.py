@@ -39,6 +39,10 @@ def get_model_device(model):
     return next(model.parameters()).device
 
 
+def resolve_method(args):
+    return args.method or "base"
+
+
 def load_qwen_model(args):
     if args.vision_retracing not in {"default", "append", "add", "adapt"}:
         raise ValueError("Invalid vision retracing mode. Choose from default, append, add, adapt.")
@@ -57,7 +61,8 @@ def load_qwen_model(args):
     model.generation_config = GenerationConfig.from_pretrained(checkpoint, trust_remote_code=True)
     model.generation_config.top_p = 0.01
 
-    if args.apply_memvr == "memvr":
+    method = resolve_method(args)
+    if method in {"memvr", "evo"}:
         apply_memvr_qwen25(
             self=model,
             starting_layer=args.starting_layer,
@@ -66,7 +71,7 @@ def load_qwen_model(args):
             retracing_ratio=args.retracing_ratio,
             retrace_delay_layers=args.retrace_delay_layers,
             retrace_target_layers=args.retrace_target_layers,
-            use_state_drift_trigger=args.use_state_drift_trigger,
+            method=method,
             state_drift_threshold=args.state_drift_threshold,
             state_drift_pooling=args.state_drift_pooling,
         )
@@ -153,7 +158,7 @@ def run_qa_eval(args, model_name, processor, model):
         "triggered_samples": triggered_samples,
         "triggered_ratio": triggered_ratio,
     }
-    stats_file = f"{answers_file}.memvr_stats.json"
+    stats_file = f"{answers_file}.{resolve_method(args)}_stats.json"
     with open(stats_file, "w") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
 
@@ -243,12 +248,13 @@ def build_parser():
     parser.add_argument("--num_beams", type=int, default=1)
     parser.add_argument("--max-new-tokens", type=int, default=512)
 
+    parser.add_argument("--method", type=str, default=None, choices=["base", "memvr", "evo"])
+
     parser.add_argument("--cuda-device", type=str, default="cuda:0")
     parser.add_argument("--vision-retracing", type=str, default="default")
     parser.add_argument("--retracing-ratio", type=float, default=0.0)
     parser.add_argument("--retrace-delay-layers", type=int, default=1)
     parser.add_argument("--retrace-target-layers", type=str, default="")
-    parser.add_argument("--use-state-drift-trigger", action="store_true", default=False)
     parser.add_argument("--state-drift-threshold", type=float, default=0.5)
     parser.add_argument("--state-drift-pooling", type=str, default="mean", choices=["mean", "max"])
     parser.add_argument("--entropy-threshold", type=float, default=0.75)

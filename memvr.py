@@ -917,7 +917,7 @@ def apply_memvr_qwen25(
     retracing_ratio: float,
     retrace_delay_layers: int = 1,
     retrace_target_layers: str = "",
-    use_state_drift_trigger: bool = True,
+    method: str = "memvr",
     state_drift_threshold: float = 0.5,
     state_drift_pooling: str = "mean",
     ):
@@ -930,7 +930,7 @@ def apply_memvr_qwen25(
     self.model.language_model.layers[0].mlp.entropy_threshold = entropy_threshold
     self.model.language_model.layers[0].mlp.retrace_delay_layers = max(1, int(retrace_delay_layers))
     self.model.language_model.layers[0].mlp.retrace_target_layers = retrace_target_layers
-    self.model.language_model.layers[0].mlp.use_state_drift_trigger = bool(use_state_drift_trigger)
+    self.model.language_model.layers[0].mlp.memvr_method = str(method)
     self.model.language_model.layers[0].mlp.state_drift_threshold = float(state_drift_threshold)
     self.model.language_model.layers[0].mlp.state_drift_pooling = str(state_drift_pooling)
     for layer in range(28):

@@ -891,7 +891,7 @@ class Qwen2MLP(nn.Module):
         self.starting_layer = 0
         self.ending_layer = 0
         self.retrace_target_layers = ""
-        self.use_state_drift_trigger = False
+        self.memvr_method = "memvr"
         self.state_drift_threshold = 0.5
         self.state_drift_pooling = "mean"
         self.adpt_sign = 0
@@ -1041,7 +1041,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_threshold = self.layers[0].mlp.entropy_threshold
         starting_layer = self.layers[0].mlp.starting_layer
         ending_layer = self.layers[0].mlp.ending_layer
-        use_state_drift_trigger = bool(getattr(self.layers[0].mlp, "use_state_drift_trigger", False))
+        method = str(getattr(self.layers[0].mlp, "memvr_method", "memvr") or "memvr").lower()
         state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
         state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
         retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
@@ -1104,10 +1104,13 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 **kwargs,
             )
 
-            # Build a per-sample image-state trajectory from current layer hidden states.
-            # We mean-pool image token states per batch item, then monitor direction change
-            # between consecutive update vectors across layers.
-            if image_token_mask is not None and hidden_states.dim() == 3:
+            if method in {"memvr", "evo"} and image_token_mask is not None:
+                dynamic_visual_token = hidden_states[image_token_mask]
+
+            if method == "evo" and image_token_mask is not None and hidden_states.dim() == 3:
+                # Build a per-sample image-state trajectory from current layer hidden states.
+                # We mean-pool image token states per batch item, then monitor direction change
+                # between consecutive update vectors across layers.
                 img_mask = image_token_mask
                 if img_mask.dim() > 2:
                     img_mask = img_mask.squeeze(-1)
@@ -1139,24 +1142,22 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                         prev_prev_img_state = prev_img_state
                         prev_img_state = pooled_img_state
 
-            # Refresh visual token from the previous layer's image-token hidden states.
-            if image_token_mask is not None:
-                dynamic_visual_token = hidden_states[image_token_mask]
-
             if not apply_memvr or not hasattr(self, "lm_head"):
                 layer += 1
                 continue
 
-            norm_hidden_states = self.norm(hidden_states)
-            logits = self.lm_head(norm_hidden_states)
-            logits = logits[:, -1, :].float()
+            entropy_value = 0.0
+            if method == "memvr":
+                norm_hidden_states = self.norm(hidden_states)
+                logits = self.lm_head(norm_hidden_states)
+                logits = logits[:, -1, :].float()
 
-            top_k = min(10, logits.shape[-1])
-            top_k_scores, _ = torch.topk(logits, top_k)
-            probabilities = F.softmax(top_k_scores, dim=-1)
-            entropy_base = torch.log(torch.tensor(float(max(top_k, 2)), device=probabilities.device))
-            entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
-            entropy_value = float(entropy.item())
+                top_k = min(10, logits.shape[-1])
+                top_k_scores, _ = torch.topk(logits, top_k)
+                probabilities = F.softmax(top_k_scores, dim=-1)
+                entropy_base = torch.log(torch.tensor(float(max(top_k, 2)), device=probabilities.device))
+                entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
+                entropy_value = float(entropy.item())
 
             if layer == pending_reset_layer:
                 current_mlp = self.layers[layer].mlp
@@ -1168,7 +1169,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                     current_mlp.adpt_w1 = None
                     current_mlp.adpt_w2 = None
                 pending_reset_layer = -1
-                print("\n added visual token with adatption channel at layer ", layer)
+                # print("\n added visual token with adatption channel at layer ", layer)
 
             if use_explicit_layers and layer in retrace_target_layers:
                 current_mlp = self.layers[layer].mlp
@@ -1177,14 +1178,13 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 current_mlp.adpt_w2 = None
                 print("\n added visual token with adatption channel at layer ", layer)
             
-            use_legacy_entropy_trigger = not use_state_drift_trigger
             trigger_hit = False
-            if use_state_drift_trigger:
+            if method == "evo":
                 trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
-            else:
-                print(entropy_value, entropy_threshold)
-                ipdb.set_trace()
+            elif method == "memvr":
                 trigger_hit = entropy_value > entropy_threshold
+            else:
+                trigger_hit = False
 
             if (
                 not use_explicit_layers
@@ -1199,6 +1199,10 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 self._memvr_last_triggered = True
                 self._memvr_last_trigger_layer = layer + retrace_delay_layers
                 self._memvr_trigger_total += 1
+
+                print(
+                    f"[MemVR] method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
+                )
 
                 next_mlp = self.layers[layer + retrace_delay_layers].mlp
                 next_mlp.adpt_sign = 1
@@ -1226,10 +1230,12 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 next_mlp.adpt_w2 += scale_w2 * next_w2_seed
                 next_mlp.retracing_ratio = retracing_ratio
 
-            if use_legacy_entropy_trigger:
+            if method == "memvr":
                 entropy_list.append(f"{entropy_value:.3f}")
-            else:
+            elif method == "evo":
                 entropy_list.append(f"{state_drift_score:.3f}")
+            else:
+                entropy_list.append("0.000")
             layer += 1
 
         hidden_states = self.norm(hidden_states)
