@@ -80,13 +80,18 @@ class LlamaMLP(nn.Module):
         self.entropy_threshold = 1
         self.starting_layer = 0
         self.ending_layer = 0
+        self.retrace_delay_layers = 1
+        self.retrace_target_layers = ""
+        self.memvr_method = "memvr"
+        self.state_drift_threshold = 0.5
+        self.state_drift_pooling = "mean"
+        self.image_token_mask = None
         self.adpt_sign = 0
 
 
 
 
     def forward(self, x):
-        ipdb.set_trace()
         if self.config.pretraining_tp > 1:
             slice = self.intermediate_size // self.config.pretraining_tp
             gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
@@ -183,12 +188,22 @@ def forward(
     entropy_list = []
     apply_memvr = self.layers[0].mlp.apply_memvr
     visual_token = self.layers[0].mlp.visual_token
+    dynamic_visual_token = visual_token
     retracing_ratio = self.layers[0].mlp.retracing_ratio
     entropy_threshold = self.layers[0].mlp.entropy_threshold
     starting_layer = self.layers[0].mlp.starting_layer
     ending_layer = self.layers[0].mlp.ending_layer
+    method = str(getattr(self.layers[0].mlp, "memvr_method", "memvr") or "memvr").lower()
+    retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
+    state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
+    state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
+    image_token_mask = getattr(self.layers[0].mlp, "image_token_mask", None) if past_seen_tokens == 0 else None
     visual_retracing_event = False # to prevent multiple retracing event
     vision_retracing_sign  = False # to decide whether to add visual token in the next layer
+    prev_prev_img_state = None
+    prev_img_state = None
+    state_drift_score = 0.0
+    state_drift_ready = False
 
 
     for decoder_layer in self.layers:
@@ -219,6 +234,41 @@ def forward(
             )
 
         hidden_states = layer_outputs[0]
+
+        if method in {"memvr", "evo"} and image_token_mask is not None:
+            dynamic_visual_token = hidden_states[image_token_mask]
+
+        if method == "evo" and image_token_mask is not None and hidden_states.dim() == 3:
+            img_mask = image_token_mask
+            if img_mask.dim() > 2:
+                img_mask = img_mask.squeeze(-1)
+            if img_mask.dim() == 2 and img_mask.shape[1] == hidden_states.shape[1]:
+                img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
+                valid_img_samples = img_mask.any(dim=1)
+                if valid_img_samples.any():
+                    img_mask_f = img_mask.unsqueeze(-1).to(dtype=hidden_states.dtype)
+                    pooled_img_state = (hidden_states * img_mask_f).sum(dim=1) / img_mask_f.sum(dim=1).clamp_min(1.0)
+
+                    state_drift_ready = False
+                    if prev_img_state is not None and prev_prev_img_state is not None:
+                        v_prev = prev_img_state - prev_prev_img_state
+                        v_curr = pooled_img_state - prev_img_state
+                        cos_sim = F.cosine_similarity(v_curr, v_prev, dim=-1, eps=1e-6)
+                        drift_per_sample = 1.0 - cos_sim
+                        drift_per_sample = torch.where(
+                            valid_img_samples,
+                            drift_per_sample,
+                            torch.zeros_like(drift_per_sample),
+                        )
+
+                        if state_drift_pooling == "max":
+                            state_drift_score = float(drift_per_sample.max().item())
+                        else:
+                            state_drift_score = float(drift_per_sample[valid_img_samples].mean().item())
+                        state_drift_ready = True
+
+                    prev_prev_img_state = prev_img_state
+                    prev_img_state = pooled_img_state
 
         if use_cache:
             next_decoder_cache = layer_outputs[2 if output_attentions else 1]
@@ -262,16 +312,34 @@ def forward(
         # round n
         # calculate the entropy of the top 10 logits. if the entropy is greater than the threshold, and the visual retracing event is not happening, and the layer is within the range of starting and ending layer, then add the visual token to the next layer with adaptation channel
         # initialize the adaptation channel with the visual token
-        if entropy > entropy_threshold and visual_retracing_event == False and layer > starting_layer and layer < ending_layer:
+        trigger_hit = False
+        if method == "evo":
+            trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
+        else:
+            trigger_hit = entropy > entropy_threshold
+
+        if trigger_hit and visual_retracing_event == False and layer > starting_layer and layer < ending_layer and layer + retrace_delay_layers < len(self.layers):
             
             vision_retracing_sign = True
             visual_retracing_event = True
 
-            self.layers[layer+1].mlp.adpt_sign = 1 # triggers the MemVR adaptation channel in MLP of the next layer
-            self.layers[layer+1].mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(visual_token))
-            self.layers[layer+1].mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(visual_token.T))
-            self.layers[layer+1].mlp.adpt_w1 += (torch.mean(torch.abs(self.layers[layer+1].mlp.up_proj.weight)) / (torch.mean(torch.abs(visual_token))))  * visual_token
-            self.layers[layer+1].mlp.adpt_w2 += (torch.mean(torch.abs(self.layers[layer+1].mlp.down_proj.weight)) / (torch.mean(torch.abs(visual_token))))  * visual_token.T
+            target_layer = layer + retrace_delay_layers
+            self.layers[target_layer].mlp.adpt_sign = 1 # triggers the MemVR adaptation channel in MLP of the next layer
+
+            adapter_seed = dynamic_visual_token if dynamic_visual_token is not None else visual_token
+            if adapter_seed is not None:
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                next_mlp = self.layers[target_layer].mlp
+                next_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(adapter_seed))
+                next_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(adapter_seed.T))
+                next_mlp.adpt_w1 += (torch.mean(torch.abs(next_mlp.up_proj.weight)) / (torch.mean(torch.abs(adapter_seed)) + 1e-6)) * adapter_seed
+                next_mlp.adpt_w2 += (torch.mean(torch.abs(next_mlp.down_proj.weight)) / (torch.mean(torch.abs(adapter_seed)) + 1e-6)) * adapter_seed.T
+                next_mlp.retracing_ratio = retracing_ratio
 
             
         # print("Extracted Top 10 largest scores:", formatted_top_k_scores)
@@ -848,7 +916,11 @@ def apply_memvr_llama(
         starting_layer: int,
         ending_layer: int,
         entropy_threshold: float,
-        retracing_ratio: float
+        retracing_ratio: float,
+        method: str = "memvr",
+        retrace_delay_layers: int = 1,
+        state_drift_threshold: float = 0.5,
+        state_drift_pooling: str = "mean",
     ):
     transformers.models.llama.modeling_llama.LlamaMLP = LlamaMLP
     transformers.models.llama.modeling_llama.LlamaModel.forward = forward
@@ -859,8 +931,13 @@ def apply_memvr_llama(
     self.model.layers[0].mlp.starting_layer = starting_layer
     self.model.layers[0].mlp.ending_layer = ending_layer
     self.model.layers[0].mlp.entropy_threshold = entropy_threshold
+    self.model.layers[0].mlp.retrace_delay_layers = max(1, int(retrace_delay_layers))
+    self.model.layers[0].mlp.memvr_method = str(method)
+    self.model.layers[0].mlp.state_drift_threshold = float(state_drift_threshold)
+    self.model.layers[0].mlp.state_drift_pooling = str(state_drift_pooling)
     for layer in range(31):
         self.model.layers[layer].mlp.retracing_ratio = retracing_ratio
+        self.model.layers[layer].mlp.image_token_mask = None
 
 def apply_memvr_qwen(
         self,

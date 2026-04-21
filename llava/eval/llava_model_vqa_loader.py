@@ -106,7 +106,7 @@ def eval_model(args):
     data_loader = create_data_loader(questions, args.image_folder, tokenizer, image_processor, model.config)
     
     # MemVR
-    if args.apply_memvr == 'memvr':
+    if args.memvr_mode != 'base':
         # print("xx")
         # exit()
         
@@ -115,7 +115,11 @@ def eval_model(args):
             starting_layer=args.starting_layer,
             ending_layer=args.ending_layer,
             entropy_threshold=args.entropy_threshold,
-            retracing_ratio=args.retracing_ratio
+            retracing_ratio=args.retracing_ratio,
+            method=args.memvr_mode,
+            retrace_delay_layers=args.retrace_delay_layers,
+            state_drift_threshold=args.state_drift_threshold,
+            state_drift_pooling=args.state_drift_pooling,
         )
 
     for (input_ids, image_tensor, image_sizes), line in tqdm(zip(data_loader, questions), total=len(questions)):
@@ -172,7 +176,10 @@ if __name__ == "__main__":
     parser.add_argument("--entropy-threshold", type=float, default=0.75)
     parser.add_argument("--starting-layer", type=int, default=5)
     parser.add_argument("--ending-layer", type=int, default=16)
-    parser.add_argument("--apply-memvr", type=str, default='default')
+    parser.add_argument("--memvr-mode", type=str, default='base', choices=['base', 'memvr', 'evo'])
+    parser.add_argument("--retrace-delay-layers", type=int, default=1)
+    parser.add_argument("--state-drift-threshold", type=float, default=0.5)
+    parser.add_argument("--state-drift-pooling", type=str, default='mean')
     args = parser.parse_args()
 
     eval_model(args)
