@@ -9,11 +9,11 @@ export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 
 #   bash qwen25/scripts/pope.sh
 
-method="memvr"  # method: base | memvr | evo
+method="base"  # method: base | memvr | evo
 num_gpus="1"
 gpu_ids_csv="1"
 num_gpus="4"
-gpu_ids_csv="0,5,6,7"
+gpu_ids_csv="0,1,2,3"
 log_to_file="1"  # 1: write/append to results/<model>/pope/<method>/log.log, 0: disable
 
 # -----------------------------------------------------------------------------
@@ -25,8 +25,8 @@ model_path_default="../llms/Qwen2.5-VL-7B-Instruct" # Model weights path passed 
 coco_image_folder_default="../Datasets/coco2014/images/val2014"
 gqa_image_folder_default="../Datasets/GQA/images"
 
-dataset_prefixes_default="coco,gqa,aokvqa"                     # CSV, e.g. "coco,gqa,aokvqa"
-splits_default="random,popular,adversarial"                # CSV, e.g. "random,popular,adversarial"
+dataset_prefixes_default="coco"                     # CSV, e.g. "coco,gqa,aokvqa"
+splits_default="random"                # CSV, e.g. "random,popular,adversarial"
 limit_default="0"                                   # 0 means full set.
 
 starting_layer_default="8"
@@ -110,6 +110,8 @@ else
     experiment="$model_name/$method"
 fi
 
+analysis_log_root="$results_root/analysis"
+
 log_file="$root_dir/results/$model_name/pope/$method/log.log"
 if [[ "$log_to_file" == "1" ]]; then
     mkdir -p "$(dirname "$log_file")"
@@ -191,6 +193,7 @@ run_case() {
     local question_file="$tmp_root/${metric_key}.jsonl"
     local answers_file="$results_root/${metric_key}.jsonl"
     local case_tmp_dir="$tmp_root/${metric_key}"
+    local case_analysis_dir="$analysis_log_root/${metric_key}"
     mkdir -p "$case_tmp_dir"
 
     python "$root_dir/llava/scripts/prepare_pope_questions.py" \
@@ -219,6 +222,8 @@ run_case() {
             --question-file "$question_file" \
             --image-folder "$image_folder" \
             --answers-file "$answers_file" \
+            --dataset-name "$metric_key" \
+            --analysis-log-dir "$case_analysis_dir" \
             --temperature 0 \
             --cuda-device 'cuda:0' \
             --method "$method" \
@@ -246,6 +251,8 @@ run_case() {
                 --question-file "$question_file" \
                 --image-folder "$image_folder" \
                 --answers-file "$part_file" \
+                --dataset-name "$metric_key" \
+                --analysis-log-dir "$case_analysis_dir" \
                 --temperature 0 \
                 --cuda-device 'cuda:0' \
                 --method "$method" \

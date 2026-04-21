@@ -1,0 +1,6 @@
+{
+  "auc_max_r": 0.444865259036382,
+  "auc_max_entropy": 0.5,
+  "num_samples": 3000,
+  "label_rule": "use hallucinated_or_not if available, else correct_or_not==0"
+}

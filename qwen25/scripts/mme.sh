@@ -12,9 +12,9 @@ export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 #   bash qwen25/scripts/mme.sh base
 #   bash qwen25/scripts/mme.sh memvr 4
 #   bash qwen25/scripts/mme.sh evo 4 "0,1,2,3"
-method="${1:-base}"
-num_gpus="${2:-1}"
-gpu_ids_csv="${3:-}"
+method="evo"
+num_gpus="4"
+gpu_ids_csv="0,1,2,3"
 
 # -----------------------------------------------------------------------------
 # Default parameters (edit here)
@@ -66,6 +66,7 @@ if [[ -n "$run_tag" ]]; then
 else
     results_root="$root_dir/results/$model_name/mme/$method"
 fi
+analysis_log_root="$results_root/analysis"
 answers_file="$results_root/answers.jsonl"
 eval_results_dir="$results_root/eval_answers"
 
@@ -145,6 +146,8 @@ if [[ "$num_gpus" -eq 1 ]]; then
         --question-file "$question_file" \
         --image-folder "$mme_root/MME_Benchmark_release_version" \
         --answers-file "$answers_file" \
+        --dataset-name "MME" \
+        --analysis-log-dir "$analysis_log_root" \
         --temperature 0.1 \
         --cuda-device 'cuda:0' \
         --method "$method" \
@@ -172,6 +175,8 @@ else
             --question-file "$question_file" \
             --image-folder "$mme_root/MME_Benchmark_release_version" \
             --answers-file "$part_file" \
+            --dataset-name "MME" \
+            --analysis-log-dir "$analysis_log_root" \
             --temperature 0 \
             --cuda-device 'cuda:0' \
             --method "$method" \

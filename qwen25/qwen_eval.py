@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+from pathlib import Path
 import warnings
 import sys
 
@@ -19,6 +20,7 @@ from transformers550.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForC
 
 from llava.mm_utils import get_model_name_from_path
 from llava.utils import disable_torch_init
+from qwen25.analysis_logger import normalize_binary_answer, trace_qwen25_sample
 from memvr import apply_memvr_qwen25
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -96,6 +98,7 @@ def run_qa_eval(args, model_name, processor, model):
             qid = line["question_id"]
             image_name = line["image"]
             prompt = line["text"]
+            ground_truth_answer = line.get("label", line.get("answer", line.get("gt_answer", None)))
             image_path = os.path.join(args.image_folder, image_name)
 
             with torch.inference_mode():
@@ -131,6 +134,42 @@ def run_qa_eval(args, model_name, processor, model):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
+
+                if args.analysis_log_dir:
+                    generated_tensor = generated_ids_trimmed[0].unsqueeze(0)
+                    generated_answer_norm = normalize_binary_answer(output)
+                    ground_truth_norm = normalize_binary_answer(ground_truth_answer)
+                    final_prediction_correct = (
+                        generated_answer_norm is not None
+                        and ground_truth_norm is not None
+                        and generated_answer_norm == ground_truth_norm
+                    )
+                    is_hallucinated = None
+                    if generated_answer_norm in {"yes", "no"} and ground_truth_norm in {"yes", "no"}:
+                        # Treat both error types as hallucination for binary POPE-style QA:
+                        # 1) say "yes" when GT is "no" (false positive)
+                        # 2) say "no" when GT is "yes" (false negative)
+                        is_hallucinated = int(generated_answer_norm != ground_truth_norm)
+
+                    analysis_metadata = {
+                        "sample_id": str(qid),
+                        "question_id": qid,
+                        "dataset_name": args.dataset_name or args.task_type,
+                        "model_name": model_name,
+                        "prompt": prompt,
+                        "generated_answer": output,
+                        "ground_truth_answer": ground_truth_answer,
+                        "final_prediction_correct": final_prediction_correct,
+                        "is_hallucinated": is_hallucinated,
+                    }
+                    trace_qwen25_sample(
+                        model=model,
+                        processor=processor,
+                        inputs=inputs,
+                        generated_ids_trimmed=generated_tensor,
+                        metadata=analysis_metadata,
+                        analysis_log_dir=args.analysis_log_dir,
+                    )
                 after_trigger_total = getattr(model.model.language_model, "_memvr_trigger_total", 0)
                 if after_trigger_total > before_trigger_total:
                     triggered_samples += 1
@@ -159,8 +198,15 @@ def run_qa_eval(args, model_name, processor, model):
         "triggered_ratio": triggered_ratio,
     }
     stats_file = f"{answers_file}.{resolve_method(args)}_stats.json"
-    with open(stats_file, "w") as f:
-        json.dump(stats, f, ensure_ascii=False, indent=2)
+    try:
+        stats_dir = os.path.dirname(stats_file)
+        if stats_dir:
+            os.makedirs(stats_dir, exist_ok=True)
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        print(f"[MemVR Stats] warning: failed to write stats_file={stats_file}: {exc}")
+        stats_file = "<write_failed>"
 
     print(
         f"[MemVR Stats] total_samples={total_samples} "
@@ -264,6 +310,8 @@ def build_parser():
 
     parser.add_argument("--chair-image-list", type=str, default="/data/ssz/Datasets/chair/shuffled_img_files.txt")
     parser.add_argument("--chair-max-samples", type=int, default=500)
+    parser.add_argument("--dataset-name", type=str, default="")
+    parser.add_argument("--analysis-log-dir", type=str, default="")
     return parser
 
 

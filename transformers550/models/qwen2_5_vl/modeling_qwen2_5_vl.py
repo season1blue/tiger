@@ -1200,9 +1200,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 self._memvr_last_trigger_layer = layer + retrace_delay_layers
                 self._memvr_trigger_total += 1
 
-                print(
-                    f"[MemVR] method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
-                )
+                # print(
+                #     f"[MemVR] method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
+                # )
 
                 next_mlp = self.layers[layer + retrace_delay_layers].mlp
                 next_mlp.adpt_sign = 1
