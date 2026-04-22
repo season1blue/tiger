@@ -142,7 +142,6 @@ def eval_model(args):
                 )
             
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-        print("\n Outputs: ", outputs)
 
         ans_id = shortuuid.uuid()
         ans_file.write(json.dumps({"question_id": idx,

@@ -66,6 +66,26 @@ else:
 logger = logging.get_logger(__name__)
 
 
+def _fit_tensor_to_shape(source: torch.Tensor | None, target_shape: tuple[int, ...]) -> torch.Tensor | None:
+    if source is None:
+        return None
+
+    if not isinstance(source, torch.Tensor):
+        source = torch.as_tensor(source)
+
+    target_numel = 1
+    for dim in target_shape:
+        target_numel *= dim
+
+    flat_source = source.reshape(-1)
+    if flat_source.numel() == 0:
+        return torch.zeros(target_shape, dtype=source.dtype, device=source.device)
+
+    repeat_count = (target_numel + flat_source.numel() - 1) // flat_source.numel()
+    resized = flat_source.repeat(repeat_count)[:target_numel]
+    return resized.reshape(target_shape).to(device=source.device, dtype=source.dtype)
+
+
 class Qwen3_5VisionRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
@@ -703,8 +723,34 @@ class Qwen3_5MLP(nn.Module):
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
+        # MemVR
+        self.apply_memvr = False
+        self.visual_token = None
+        self.retracing_ratio = 0
+        self.entropy_threshold = 1
+        self.starting_layer = 0
+        self.ending_layer = 0
+        self.retrace_delay_layers = 1
+        self.retrace_target_layers = ""
+        self.memvr_method = "memvr"
+        self.state_drift_threshold = 0.5
+        self.state_drift_pooling = "mean"
+        self.image_token_mask = None
+        self.adpt_sign = 0
+        self.adpt_w1 = None
+        self.adpt_w2 = None
+
     def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        if getattr(self, "adpt_sign", 0) == 1:
+            adpt_w1 = getattr(self, "adpt_w1", None)
+            adpt_w2 = getattr(self, "adpt_w2", None)
+            if adpt_w1 is not None and adpt_w2 is not None:
+                adapter_out = torch.matmul(torch.matmul(x, adpt_w1.T), adpt_w2)
+                eps = 1e-6
+                norm_adapter_out = (torch.mean(torch.abs(down_proj)) / (torch.mean(torch.abs(adapter_out)) + eps)) * adapter_out
+                retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
+                return down_proj * (1 - retracing_ratio) + norm_adapter_out * retracing_ratio
         return down_proj
 
 
@@ -1218,6 +1264,9 @@ class Qwen3_5TextModel(Qwen3_5PreTrainedModel):
         self.norm = Qwen3_5RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen3_5TextRotaryEmbedding(config=config)
         self.gradient_checkpointing = False
+        self._memvr_trigger_total = 0
+        self._memvr_last_triggered = False
+        self._memvr_last_trigger_layer = -1
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1234,8 +1283,12 @@ class Qwen3_5TextModel(Qwen3_5PreTrainedModel):
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
+        image_token_mask = kwargs.pop("image_token_mask", None)
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+        self._memvr_last_triggered = False
+        self._memvr_last_trigger_layer = -1
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1269,7 +1322,66 @@ class Qwen3_5TextModel(Qwen3_5PreTrainedModel):
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
+        # MemVR
+        layer = 0
+        entropy_list = []
+        apply_memvr = self.layers[0].mlp.apply_memvr
+        visual_token = self.layers[0].mlp.visual_token
+        dynamic_visual_token = visual_token
+        retracing_ratio = self.layers[0].mlp.retracing_ratio
+        entropy_threshold = self.layers[0].mlp.entropy_threshold
+        starting_layer = self.layers[0].mlp.starting_layer
+        ending_layer = self.layers[0].mlp.ending_layer
+        method = str(getattr(self.layers[0].mlp, "memvr_method", "memvr") or "memvr").lower()
+        state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
+        state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
+        retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
+        retrace_target_layers_raw = str(getattr(self.layers[0].mlp, "retrace_target_layers", "") or "").strip()
+        retrace_target_layers = {
+            int(v.strip())
+            for v in retrace_target_layers_raw.split(",")
+            if v.strip() and v.strip().lstrip("-").isdigit()
+        }
+        use_explicit_layers = len(retrace_target_layers) > 0
+        visual_retracing_event = False
+        pending_reset_layer = -1
+        prev_prev_img_state = None
+        prev_img_state = None
+        state_drift_score = 0.0
+        state_drift_ready = False
+
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            layer = i
+            if use_explicit_layers and layer in retrace_target_layers and dynamic_visual_token is not None:
+                current_mlp = self.layers[layer].mlp
+                current_mlp.adpt_sign = 1
+
+                adapter_seed = dynamic_visual_token
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                cur_w1_seed = _fit_tensor_to_shape(adapter_seed, current_mlp.gate_proj.weight.shape)
+                cur_w2_seed = _fit_tensor_to_shape(adapter_seed.T, current_mlp.up_proj.weight.shape)
+                current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(cur_w1_seed))
+                current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(cur_w2_seed))
+
+                scale_w1 = torch.mean(torch.abs(current_mlp.gate_proj.weight)) / (
+                    torch.mean(torch.abs(cur_w1_seed)) + 1e-6
+                )
+                scale_w2 = torch.mean(torch.abs(current_mlp.up_proj.weight)) / (
+                    torch.mean(torch.abs(cur_w2_seed)) + 1e-6
+                )
+                current_mlp.adpt_w1 += scale_w1 * cur_w1_seed
+                current_mlp.adpt_w2 += scale_w2 * cur_w2_seed
+                current_mlp.retracing_ratio = retracing_ratio
+
+                self._memvr_last_triggered = True
+                self._memvr_last_trigger_layer = layer
+                self._memvr_trigger_total += 1
+
             layer_mask = linear_attn_mask if self.config.layer_types[i] == "linear_attention" else causal_mask
 
             hidden_states = decoder_layer(
@@ -1281,6 +1393,124 @@ class Qwen3_5TextModel(Qwen3_5PreTrainedModel):
                 use_cache=use_cache,
                 **kwargs,
             )
+
+            if method in {"memvr", "evo"} and image_token_mask is not None:
+                dynamic_visual_token = hidden_states[image_token_mask]
+
+            if method == "evo" and image_token_mask is not None and hidden_states.dim() == 3:
+                img_mask = image_token_mask
+                if img_mask.dim() > 2:
+                    img_mask = img_mask.squeeze(-1)
+                if img_mask.dim() == 2 and img_mask.shape[1] == hidden_states.shape[1]:
+                    img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
+                    valid_img_samples = img_mask.any(dim=1)
+                    if valid_img_samples.any():
+                        img_mask_f = img_mask.unsqueeze(-1).to(dtype=hidden_states.dtype)
+                        pooled_img_state = (hidden_states * img_mask_f).sum(dim=1) / img_mask_f.sum(dim=1).clamp_min(1.0)
+
+                        state_drift_ready = False
+                        if prev_img_state is not None and prev_prev_img_state is not None:
+                            v_prev = prev_img_state - prev_prev_img_state
+                            v_curr = pooled_img_state - prev_img_state
+                            cos_sim = F.cosine_similarity(v_curr, v_prev, dim=-1, eps=1e-6)
+                            drift_per_sample = 1.0 - cos_sim
+                            drift_per_sample = torch.where(
+                                valid_img_samples,
+                                drift_per_sample,
+                                torch.zeros_like(drift_per_sample),
+                            )
+
+                            if state_drift_pooling == "max":
+                                state_drift_score = float(drift_per_sample.max().item())
+                            else:
+                                state_drift_score = float(drift_per_sample[valid_img_samples].mean().item())
+                            state_drift_ready = True
+
+                        prev_prev_img_state = prev_img_state
+                        prev_img_state = pooled_img_state
+
+            if not apply_memvr or not hasattr(self, "lm_head"):
+                continue
+
+            entropy_value = 0.0
+            if method == "memvr":
+                norm_hidden_states = self.norm(hidden_states)
+                logits = self.lm_head(norm_hidden_states)
+                logits = logits[:, -1, :].float()
+
+                top_k = min(10, logits.shape[-1])
+                top_k_scores, _ = torch.topk(logits, top_k)
+                probabilities = F.softmax(top_k_scores, dim=-1)
+                entropy_base = torch.log(torch.tensor(float(max(top_k, 2)), device=probabilities.device))
+                entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
+                entropy_value = float(entropy.item())
+
+            if layer == pending_reset_layer:
+                current_mlp = self.layers[layer].mlp
+                current_mlp.adpt_sign = 0
+                current_mlp.adpt_w1 = None
+                current_mlp.adpt_w2 = None
+                pending_reset_layer = -1
+
+            if use_explicit_layers and layer in retrace_target_layers:
+                current_mlp = self.layers[layer].mlp
+                current_mlp.adpt_sign = 0
+                current_mlp.adpt_w1 = None
+                current_mlp.adpt_w2 = None
+
+            if method == "evo":
+                trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
+            elif method == "memvr":
+                trigger_hit = entropy_value > entropy_threshold
+            else:
+                trigger_hit = False
+
+            if (
+                not use_explicit_layers
+                and trigger_hit
+                and not visual_retracing_event
+                and dynamic_visual_token is not None
+                and layer > starting_layer
+                and layer < ending_layer
+                and layer + retrace_delay_layers < len(self.layers)
+            ):
+                visual_retracing_event = True
+                self._memvr_last_triggered = True
+                self._memvr_last_trigger_layer = layer + retrace_delay_layers
+                self._memvr_trigger_total += 1
+
+                next_mlp = self.layers[layer + retrace_delay_layers].mlp
+                next_mlp.adpt_sign = 1
+                pending_reset_layer = layer + retrace_delay_layers
+
+                adapter_seed = dynamic_visual_token
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+                    adapter_seed = adapter_seed[0]
+                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+                    adapter_seed = adapter_seed.unsqueeze(0)
+                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+                next_w1_seed = _fit_tensor_to_shape(adapter_seed, next_mlp.gate_proj.weight.shape)
+                next_w2_seed = _fit_tensor_to_shape(adapter_seed.T, next_mlp.up_proj.weight.shape)
+                next_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(next_w1_seed))
+                next_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(next_w2_seed))
+
+                scale_w1 = torch.mean(torch.abs(next_mlp.gate_proj.weight)) / (
+                    torch.mean(torch.abs(next_w1_seed)) + 1e-6
+                )
+                scale_w2 = torch.mean(torch.abs(next_mlp.up_proj.weight)) / (
+                    torch.mean(torch.abs(next_w2_seed)) + 1e-6
+                )
+                next_mlp.adpt_w1 += scale_w1 * next_w1_seed
+                next_mlp.adpt_w2 += scale_w2 * next_w2_seed
+                next_mlp.retracing_ratio = retracing_ratio
+
+            if method == "memvr":
+                entropy_list.append(f"{entropy_value:.3f}")
+            elif method == "evo":
+                entropy_list.append(f"{state_drift_score:.3f}")
+            else:
+                entropy_list.append("0.000")
 
         hidden_states = self.norm(hidden_states)
 
@@ -1636,6 +1866,9 @@ class Qwen3_5Model(Qwen3_5PreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
 
+        vision_token = None
+        image_token_mask = (input_ids == self.config.image_token_id) if input_ids is not None else None
+
         if pixel_values is not None:
             image_outputs: BaseModelOutputWithPooling = self.get_image_features(
                 pixel_values, image_grid_thw, return_dict=True
@@ -1646,6 +1879,7 @@ class Qwen3_5Model(Qwen3_5PreTrainedModel):
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+            vision_token = image_embeds
 
         if pixel_values_videos is not None:
             video_outputs: BaseModelOutputWithPooling = self.get_video_features(
@@ -1657,6 +1891,17 @@ class Qwen3_5Model(Qwen3_5PreTrainedModel):
                 input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
             )
             inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+            if vision_token is None:
+                vision_token = video_embeds
+
+        first_mlp = self.language_model.layers[0].mlp
+        if vision_token is not None:
+            if vision_token.dim() > 2:
+                vision_token = vision_token[0]
+            first_mlp.visual_token = vision_token
+        else:
+            first_mlp.visual_token = None
+        first_mlp.image_token_mask = image_token_mask
 
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(
@@ -1675,6 +1920,7 @@ class Qwen3_5Model(Qwen3_5PreTrainedModel):
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
+            image_token_mask=image_token_mask,
             **kwargs,
         )
 

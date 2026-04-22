@@ -60,6 +60,20 @@ def _fit_tensor_to_shape(source, target_shape):
     resized = flat_source.repeat(repeat_count)[:target_numel]
     return resized.reshape(target_shape).to(device=source.device, dtype=source.dtype)
 
+
+def _legacy_cache_seq_length(past_key_values) -> int:
+    if past_key_values is None:
+        return 0
+    try:
+        first_layer = past_key_values[0]
+        if isinstance(first_layer, (tuple, list)) and len(first_layer) > 0:
+            first_k = first_layer[0]
+            if isinstance(first_k, torch.Tensor) and first_k.ndim >= 3:
+                return int(first_k.shape[-2])
+    except Exception:
+        pass
+    return 0
+
 class LlamaMLP(nn.Module):
 
     def __init__(self, config):
@@ -142,7 +156,6 @@ def forward(
     )
     use_cache = use_cache if use_cache is not None else self.config.use_cache
     return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-    print("MEMVR: ")
     if (input_ids is None) ^ (inputs_embeds is not None):
         raise ValueError(
             "You cannot specify both input_ids and inputs_embeds at the same time, and must specify either one"
@@ -159,9 +172,16 @@ def forward(
 
     past_seen_tokens = 0
     if use_cache:  # kept for BC (cache positions)
-        if not isinstance(past_key_values, StaticCache):
+        if isinstance(past_key_values, StaticCache):
+            past_seen_tokens = past_key_values.get_seq_length()
+        elif isinstance(past_key_values, Cache):
+            past_seen_tokens = past_key_values.get_seq_length()
+        elif past_key_values is not None and hasattr(DynamicCache, "from_legacy_cache"):
             past_key_values = DynamicCache.from_legacy_cache(past_key_values)
             past_seen_tokens = past_key_values.get_seq_length()
+        else:
+            # Fallback for versions where DynamicCache legacy helpers are removed.
+            past_seen_tokens = _legacy_cache_seq_length(past_key_values)
 
     if cache_position is None:
         if isinstance(past_key_values, StaticCache):
@@ -356,7 +376,9 @@ def forward(
     next_cache = None
     if use_cache:
         next_cache = (
-            next_decoder_cache.to_legacy_cache() if isinstance(next_decoder_cache, Cache) else next_decoder_cache
+            next_decoder_cache.to_legacy_cache()
+            if isinstance(next_decoder_cache, Cache) and hasattr(next_decoder_cache, "to_legacy_cache")
+            else next_decoder_cache
         )
     if not return_dict:
         return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
@@ -1029,3 +1051,44 @@ def apply_memvr_qwen25(
     #     mlp.adpt_sign = 0
     #     mlp.adpt_w1 = None
     #     mlp.adpt_w2 = None
+
+
+def apply_memvr_qwen35(
+        self,
+        starting_layer: int,
+        ending_layer: int,
+        entropy_threshold: float,
+        retracing_ratio: float,
+        retrace_delay_layers: int = 1,
+        retrace_target_layers: str = "",
+        method: str = "memvr",
+        state_drift_threshold: float = 0.5,
+        state_drift_pooling: str = "mean",
+    ):
+    # Qwen3.5-VL MemVR logic is directly implemented in modeling_qwen3_5.py.
+    self.model.language_model.lm_head = self.lm_head
+
+    self.model.language_model.layers[0].mlp.apply_memvr = True
+    self.model.language_model.layers[0].mlp.starting_layer = starting_layer
+    self.model.language_model.layers[0].mlp.ending_layer = ending_layer
+    self.model.language_model.layers[0].mlp.entropy_threshold = entropy_threshold
+    self.model.language_model.layers[0].mlp.retrace_delay_layers = max(1, int(retrace_delay_layers))
+    self.model.language_model.layers[0].mlp.retrace_target_layers = retrace_target_layers
+    self.model.language_model.layers[0].mlp.memvr_method = str(method)
+    self.model.language_model.layers[0].mlp.state_drift_threshold = float(state_drift_threshold)
+    self.model.language_model.layers[0].mlp.state_drift_pooling = str(state_drift_pooling)
+
+    num_layers = len(self.model.language_model.layers)
+    for layer in range(num_layers):
+        mlp = self.model.language_model.layers[layer].mlp
+        mlp.retracing_ratio = retracing_ratio
+        if not hasattr(mlp, "apply_memvr"):
+            mlp.apply_memvr = False
+        if not hasattr(mlp, "visual_token"):
+            mlp.visual_token = None
+        if not hasattr(mlp, "adpt_sign"):
+            mlp.adpt_sign = 0
+        if not hasattr(mlp, "adpt_w1"):
+            mlp.adpt_w1 = None
+        if not hasattr(mlp, "adpt_w2"):
+            mlp.adpt_w2 = None
