@@ -1,5 +1,4 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=0 
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,15 +9,51 @@ export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 # Usage:
 #   bash qwen25/scripts/chair.sh
 #   bash qwen25/scripts/chair.sh base
-#   bash qwen25/scripts/chair.sh memvr
-#   bash qwen25/scripts/chair.sh evo
+#   bash qwen25/scripts/chair.sh base 1
+#   bash qwen25/scripts/chair.sh memvr 1 auto
+#   bash qwen25/scripts/chair.sh evo 2
 method="${1:-base}"
+num_gpus="${2:-1}"
+gpu_ids_csv="${3:-}"
 
 if [[ "$method" != "base" && "$method" != "memvr" && "$method" != "evo" ]]; then
     echo "Invalid method: $method"
-    echo "Usage: bash qwen25/scripts/chair.sh [base|memvr|evo]"
+    echo "Usage: bash qwen25/scripts/chair.sh [base|memvr|evo] [num_gpus] [gpu_ids_csv|auto]"
     exit 1
 fi
+
+if ! [[ "$num_gpus" =~ ^[0-9]+$ ]] || [[ "$num_gpus" -lt 1 ]]; then
+    echo "Invalid num_gpus: $num_gpus"
+    exit 1
+fi
+
+pick_top_gpus_by_free_mem() {
+    local count="$1"
+    local query=""
+
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 1
+    fi
+
+    query="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null || true)"
+    if [[ -z "$query" ]]; then
+        return 1
+    fi
+
+    mapfile -t picked < <(
+        echo "$query" \
+        | awk -F',' '{gsub(/ /, "", $1); gsub(/ /, "", $2); print $1 "," $2}' \
+        | sort -t',' -k2,2nr \
+        | head -n "$count" \
+        | cut -d',' -f1
+    )
+
+    if [[ "${#picked[@]}" -lt "$count" ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "${picked[@]}"
+}
 
 # -----------------------------------------------------------------------------
 # Default parameters (can be overridden via env)
@@ -27,7 +62,7 @@ model_name="${MODEL_NAME:-Qwen2.5-VL}"
 model_path="${MODEL_PATH:-../llms/Qwen2.5-VL-7B-Instruct}"
 coco_root="${COCO_ROOT:-../Datasets/coco2014}"
 instances_json="${INSTANCES_JSON:-../Datasets/coco2014/annotations/instances_val2014.json}"
-seed="${CHAIR_SEED:-42}"
+seed="${CHAIR_SEED:-2}"
 sample_count="${CHAIR_SAMPLE_COUNT:-500}"
 max_new_tokens="${MAX_NEW_TOKENS:-512}"
 chair_print_output="${CHAIR_PRINT_OUTPUT:-1}"
@@ -43,6 +78,28 @@ retrace_delay_layers="${RETRACE_DELAY_LAYERS:-1}"
 retrace_target_layers="${RETRACE_TARGET_LAYERS:-}"
 state_drift_threshold="${STATE_DRIFT_THRESHOLD:-0.5}"
 state_drift_pooling="${STATE_DRIFT_POOLING:-mean}"
+
+gpu_select_mode="manual"
+if [[ -n "$gpu_ids_csv" && "$gpu_ids_csv" != "auto" ]]; then
+    IFS=',' read -r -a gpu_ids <<< "$gpu_ids_csv"
+else
+    gpu_ids=()
+    if mapfile -t gpu_ids < <(pick_top_gpus_by_free_mem "$num_gpus"); then
+        gpu_select_mode="auto_free_mem"
+    else
+        gpu_select_mode="fallback_index"
+        for ((i=0; i<num_gpus; i++)); do
+            gpu_ids+=("$i")
+        done
+    fi
+fi
+
+if [[ "${#gpu_ids[@]}" -lt "$num_gpus" ]]; then
+    echo "[CHAIR] provided gpu ids fewer than num_gpus"
+    exit 1
+fi
+
+selected_visible_gpus="$(IFS=,; echo "${gpu_ids[*]}")"
 
 image_folder="$coco_root/images/val2014"
 if [[ ! -d "$image_folder" ]]; then
@@ -67,6 +124,8 @@ echo "[CHAIR] model_path=$model_path"
 echo "[CHAIR] image_folder=$image_folder"
 echo "[CHAIR] instances_json=$instances_json"
 echo "[CHAIR] seed=$seed sample_count=$sample_count"
+echo "[CHAIR] num_gpus=$num_gpus gpu_select_mode=$gpu_select_mode"
+echo "[CHAIR] visible_gpus=$selected_visible_gpus"
 echo "[CHAIR] print_output=$chair_print_output debug_every=$chair_debug_every"
 echo "[CHAIR] sampled_image_list=$sample_file"
 
@@ -92,7 +151,7 @@ print(f"[CHAIR] sampled {len(sampled)} images -> {sample_file}")
 PY
 
 # Step 2: generate captions using prompt "Please describe this image in detail."
-python -m qwen25.qwen_eval \
+CUDA_VISIBLE_DEVICES="$selected_visible_gpus" python -m qwen25.qwen_eval \
     --task-type chair \
     --model-path "$model_path" \
     --question-file "$instances_json" \
