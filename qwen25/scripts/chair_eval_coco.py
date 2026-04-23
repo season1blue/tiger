@@ -208,6 +208,8 @@ def main():
     total_hallucinated = 0
     total_sentences = 0
     hallucinated_sentences = 0
+    total_gt_objects = 0
+    total_recalled_objects = 0
 
     details = []
     for row in captions:
@@ -220,6 +222,9 @@ def main():
         gt_set = set(gt)
 
         hallucinated = sorted([x for x in pred_objects if x not in gt_set])
+        recalled_objects = sorted([x for x in pred_objects if x in gt_set])
+        total_gt_objects += len(gt_set)
+        total_recalled_objects += len(recalled_objects)
 
         if pred_objects:
             total_mentioned += len(pred_objects)
@@ -237,21 +242,26 @@ def main():
                 "predicted_objects": pred_objects,
                 "gt_objects": gt,
                 "hallucinated_objects": hallucinated,
+                "recalled_objects": recalled_objects,
                 "has_hallucination": has_hall,
             }
         )
 
     chair_i = (total_hallucinated / total_mentioned) if total_mentioned > 0 else 0.0
     chair_s = (hallucinated_sentences / total_sentences) if total_sentences > 0 else 0.0
+    recall = (total_recalled_objects / total_gt_objects) if total_gt_objects > 0 else 0.0
 
     report = {
         "overall_metrics": {
             "CHAIRi": chair_i,
             "CHAIRs": chair_s,
+            "Recall": recall,
             "num_total_sentences": total_sentences,
             "num_sentences_with_hallucination": hallucinated_sentences,
             "num_total_mentioned_objects": total_mentioned,
             "num_hallucinated_objects": total_hallucinated,
+            "num_total_gt_objects": total_gt_objects,
+            "num_recalled_objects": total_recalled_objects,
         },
         "sentences": details,
     }
@@ -260,6 +270,7 @@ def main():
 
     print(f"CHAIR-i: {chair_i:.6f}")
     print(f"CHAIR-s: {chair_s:.6f}")
+    print(f"Recall: {recall:.6f}")
     print(f"Details saved to: {args.analysis_json}")
 
 

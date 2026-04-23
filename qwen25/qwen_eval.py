@@ -64,6 +64,10 @@ def load_qwen_model(args):
     model.generation_config.top_p = 0.01
 
     method = resolve_method(args)
+    # Keep a single source of truth for runtime mode: base / memvr / evo.
+    for decoder_layer in model.model.language_model.layers:
+        decoder_layer.mlp.memvr_method = method
+
     if method in {"memvr", "evo"}:
         apply_memvr_qwen25(
             self=model,
@@ -78,7 +82,8 @@ def load_qwen_model(args):
             state_drift_pooling=args.state_drift_pooling,
         )
     else:
-        model.model.language_model.layers[0].mlp.apply_memvr = False
+        for decoder_layer in model.model.language_model.layers:
+            decoder_layer.mlp.apply_memvr = False
 
     return model_name, processor, model
 
@@ -274,6 +279,12 @@ def run_chair_eval(args, processor, model):
                     clean_up_tokenization_spaces=False,
                 )[0]
 
+            if args.chair_print_output and args.chair_debug_every > 0 and ((img_idx + 1) % args.chair_debug_every == 0):
+                preview = output.replace("\n", " ").strip()
+                if len(preview) > args.chair_output_max_chars:
+                    preview = preview[: args.chair_output_max_chars] + "..."
+                print(f"[CHAIR OUTPUT] image={img_file} caption={preview}")
+
             out_f.write(json.dumps({"image_id": img_id, "caption": output}) + "\n")
 
 
@@ -310,6 +321,9 @@ def build_parser():
 
     parser.add_argument("--chair-image-list", type=str, default="/data/ssz/Datasets/chair/shuffled_img_files.txt")
     parser.add_argument("--chair-max-samples", type=int, default=500)
+    parser.add_argument("--chair-print-output", action="store_true")
+    parser.add_argument("--chair-debug-every", type=int, default=1)
+    parser.add_argument("--chair-output-max-chars", type=int, default=240)
     parser.add_argument("--dataset-name", type=str, default="")
     parser.add_argument("--analysis-log-dir", type=str, default="")
     return parser

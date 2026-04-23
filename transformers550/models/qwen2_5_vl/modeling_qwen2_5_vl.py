@@ -925,7 +925,8 @@ class Qwen2MLP(nn.Module):
             return (ffn_out*(1-self.retracing_ratio) + norm_adapter_out*self.retracing_ratio)
 
         return down_proj
-    
+
+import ipdb
 
 @auto_docstring
 class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
@@ -1041,7 +1042,11 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_threshold = self.layers[0].mlp.entropy_threshold
         starting_layer = self.layers[0].mlp.starting_layer
         ending_layer = self.layers[0].mlp.ending_layer
-        method = str(getattr(self.layers[0].mlp, "memvr_method", "memvr") or "memvr").lower()
+        method = str(getattr(self.layers[0].mlp, "memvr_method", "base") or "base").lower()
+        if method not in {"base", "memvr", "evo"}:
+            method = "base"
+        if not apply_memvr:
+            method = "base"
         state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
         state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
         retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
@@ -1063,7 +1068,6 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         entropy_list = []
 
         for decoder_layer in self.layers:
-
             if use_explicit_layers and layer in retrace_target_layers and dynamic_visual_token is not None:
                 current_mlp = self.layers[layer].mlp
                 current_mlp.adpt_sign = 1
@@ -1169,14 +1173,12 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                     current_mlp.adpt_w1 = None
                     current_mlp.adpt_w2 = None
                 pending_reset_layer = -1
-                # print("\n added visual token with adatption channel at layer ", layer)
 
             if use_explicit_layers and layer in retrace_target_layers:
                 current_mlp = self.layers[layer].mlp
                 current_mlp.adpt_sign = 0
                 current_mlp.adpt_w1 = None
                 current_mlp.adpt_w2 = None
-                print("\n added visual token with adatption channel at layer ", layer)
             
             trigger_hit = False
             if method == "evo":
@@ -1186,6 +1188,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             else:
                 trigger_hit = False
 
+          
             if (
                 not use_explicit_layers
                 and trigger_hit
@@ -1201,7 +1204,7 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 self._memvr_trigger_total += 1
 
                 # print(
-                #     f"[MemVR] method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
+                #     f"method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
                 # )
 
                 next_mlp = self.layers[layer + retrace_delay_layers].mlp

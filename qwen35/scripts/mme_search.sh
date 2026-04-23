@@ -7,7 +7,7 @@ root_dir="$(cd "$script_dir/../.." && pwd)"
 cd "$root_dir"
 
 # Usage examples:
-#   nohup bash qwen35/scripts/mme_search.sh > results/Qwen3.5-VL/mme/search/nohup.out 2>&1 &
+#   nohup bash qwen35/scripts/mme_search.sh > results/Qwen3.5-VL/mme/search/layer_search.out 2>&1 &
 #   nohup bash qwen35/scripts/mme_search.sh evo > results/Qwen3.5-VL/mme/search/nohup.out 2>&1 &
 #   nohup bash qwen35/scripts/mme_search.sh evo 5 12 > results/Qwen3.5-VL/mme/search/nohup.out 2>&1 &
 

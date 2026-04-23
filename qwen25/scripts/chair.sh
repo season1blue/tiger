@@ -1,5 +1,5 @@
 #!/bin/bash
-
+export CUDA_VISIBLE_DEVICES=0 
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,18 +24,21 @@ fi
 # Default parameters (can be overridden via env)
 # -----------------------------------------------------------------------------
 model_name="${MODEL_NAME:-Qwen2.5-VL}"
-model_path="${MODEL_PATH:-/data/ssz/llms/Qwen2.5-VL-7B-Instruct}"
-coco_root="${COCO_ROOT:-/data/ssz/Datasets/coco2014-val}"
-instances_json="${INSTANCES_JSON:-/data/ssz/Datasets/chair/annotations/instances_val2014.json}"
+model_path="${MODEL_PATH:-../llms/Qwen2.5-VL-7B-Instruct}"
+coco_root="${COCO_ROOT:-../Datasets/coco2014}"
+instances_json="${INSTANCES_JSON:-../Datasets/coco2014/annotations/instances_val2014.json}"
 seed="${CHAIR_SEED:-42}"
 sample_count="${CHAIR_SAMPLE_COUNT:-500}"
 max_new_tokens="${MAX_NEW_TOKENS:-512}"
+chair_print_output="${CHAIR_PRINT_OUTPUT:-1}"
+chair_debug_every="${CHAIR_DEBUG_EVERY:-1}"
+chair_output_max_chars="${CHAIR_OUTPUT_MAX_CHARS:-240}"
 
 # MemVR/EVO params
-retracing_ratio="${RETRACING_RATIO:-0.29}"
+retracing_ratio="${RETRACING_RATIO:-0.12}"
 entropy_threshold="${ENTROPY_THRESHOLD:-0.75}"
-starting_layer="${STARTING_LAYER:-9}"
-ending_layer="${ENDING_LAYER:-16}"
+starting_layer="${STARTING_LAYER:-8}"
+ending_layer="${ENDING_LAYER:-10}"
 retrace_delay_layers="${RETRACE_DELAY_LAYERS:-1}"
 retrace_target_layers="${RETRACE_TARGET_LAYERS:-}"
 state_drift_threshold="${STATE_DRIFT_THRESHOLD:-0.5}"
@@ -64,6 +67,7 @@ echo "[CHAIR] model_path=$model_path"
 echo "[CHAIR] image_folder=$image_folder"
 echo "[CHAIR] instances_json=$instances_json"
 echo "[CHAIR] seed=$seed sample_count=$sample_count"
+echo "[CHAIR] print_output=$chair_print_output debug_every=$chair_debug_every"
 echo "[CHAIR] sampled_image_list=$sample_file"
 
 # Step 1: sample 500 images with fixed seed and save to sampled_500.txt
@@ -107,7 +111,10 @@ python -m qwen25.qwen_eval \
     --starting-layer "$starting_layer" \
     --ending-layer "$ending_layer" \
     --chair-image-list "$sample_file" \
-    --chair-max-samples "$sample_count"
+    --chair-max-samples "$sample_count" \
+    --chair-debug-every "$chair_debug_every" \
+    --chair-output-max-chars "$chair_output_max_chars" \
+    $( [[ "$chair_print_output" == "1" ]] && echo "--chair-print-output" )
 
 # Convert jsonl to json list format.
 python - <<'PY' "$captions_jsonl" "$captions_json"

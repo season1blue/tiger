@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# export CUDA_VISIBLE_DEVICES=0 
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,9 +12,9 @@ export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 #   bash qwen25/scripts/mme.sh base
 #   bash qwen25/scripts/mme.sh memvr 4
 #   bash qwen25/scripts/mme.sh evo 4 "0,1,2,3"
-method="evo"
-num_gpus="4"
-gpu_ids_csv="0,1,2,3"
+method="${1:-base}"
+num_gpus="${2:-4}"
+gpu_ids_csv="${3:-}"
 
 # -----------------------------------------------------------------------------
 # Default parameters (edit here)
@@ -33,6 +33,34 @@ state_drift_threshold_default="0.4" # Trigger threshold for state drift score.
 
 state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
 max_new_tokens_default="2"          # Max generated tokens per sample.
+
+pick_top_gpus_by_free_mem() {
+    local count="$1"
+    local query=""
+
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 1
+    fi
+
+    query="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null || true)"
+    if [[ -z "$query" ]]; then
+        return 1
+    fi
+
+    mapfile -t picked < <(
+        echo "$query" \
+        | awk -F',' '{gsub(/ /, "", $1); gsub(/ /, "", $2); print $1 "," $2}' \
+        | sort -t',' -k2,2nr \
+        | head -n "$count" \
+        | cut -d',' -f1
+    )
+
+    if [[ "${#picked[@]}" -lt "$count" ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "${picked[@]}"
+}
 
 # -----------------------------------------------------------------------------
 # Resolve parameters (CLI/env override default)
@@ -120,13 +148,19 @@ if [[ "$expected_count" -eq 0 ]]; then
     exit 1
 fi
 
-if [[ -n "$gpu_ids_csv" ]]; then
+gpu_select_mode="manual"
+if [[ -n "$gpu_ids_csv" && "$gpu_ids_csv" != "auto" ]]; then
     IFS=',' read -r -a gpu_ids <<< "$gpu_ids_csv"
 else
     gpu_ids=()
-    for ((i=0; i<num_gpus; i++)); do
-        gpu_ids+=("$i")
-    done
+    if mapfile -t gpu_ids < <(pick_top_gpus_by_free_mem "$num_gpus"); then
+        gpu_select_mode="auto_free_mem"
+    else
+        gpu_select_mode="fallback_index"
+        for ((i=0; i<num_gpus; i++)); do
+            gpu_ids+=("$i")
+        done
+    fi
 fi
 
 if [[ "${#gpu_ids[@]}" -lt "$num_gpus" ]]; then
@@ -136,6 +170,7 @@ fi
 
 echo "[MME] question_file=$question_file"
 echo "[MME] expected_count=$expected_count"
+echo "[MME] gpu_select_mode=$gpu_select_mode"
 echo "[MME] gpu_ids=${gpu_ids[*]}"
 
 rm -f "$answers_file"
@@ -204,7 +239,12 @@ else
     done
 fi
 
-actual_count=$(wc -l < "$answers_file")
+actual_count="0"
+if [[ -f "$answers_file" ]]; then
+    actual_count="$(wc -l < "$answers_file" 2>/dev/null || true)"
+    actual_count="${actual_count//[[:space:]]/}"
+    actual_count="${actual_count:-0}"
+fi
 echo "[MME] actual_count=$actual_count"
 if [[ "$actual_count" -ne "$expected_count" ]]; then
     echo "[MME] mismatch count expected=$expected_count actual=$actual_count"
