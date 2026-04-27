@@ -28,8 +28,8 @@ retrace_delay_layers_default="1"    # Delay from trigger layer to actual injecti
 state_drift_threshold_default="0.5" # Trigger threshold for state drift score.
 state_drift_pooling_default="mean"  # Batch aggregation for drift score: mean or max.
 entropy_threshold_default="0.75"    # Entropy trigger threshold (used by memvr mode).
-starting_layer_default="8"          # Start layer index for entropy-based trigger checks.
-ending_layer_default="10"           # End layer index for entropy-based trigger checks.
+starting_layer_default="5"          # Start layer index for entropy-based trigger checks.
+ending_layer_default="16"           # End layer index for entropy-based trigger checks.
 max_new_tokens_default="1"          # Max generated tokens per sample.
 
 # -----------------------------------------------------------------------------

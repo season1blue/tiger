@@ -2,21 +2,18 @@
 
 set -euo pipefail
 
-export OPENAI_API_KEY="sk-Z4OiiJrt2rgieprh1RbDlAUp1aZ3k6j8i5Ap7VOQnukzqQJc"
-export OPENAI_BASE_URL="https://xiaoai.plus"
-
 # Usage:
-#   bash qwen25/scripts/llavabench.sh
-#   bash qwen25/scripts/llavabench.sh evo 2
-#   bash qwen25/scripts/llavabench.sh evo 1 auto
-#   bash qwen25/scripts/llavabench.sh base 1 3
+#   bash qwen35/scripts/llavabench.sh
+#   bash qwen35/scripts/llavabench.sh evo 2
+#   bash qwen35/scripts/llavabench.sh evo 1 auto
+#   bash qwen35/scripts/llavabench.sh base 1 3
 method="${1:-memvr}"
 num_gpus="${2:-1}"
 gpu_ids_csv="${3:-}"
 
 if [[ "$method" != "base" && "$method" != "memvr" && "$method" != "evo" ]]; then
     echo "Invalid method: $method"
-    echo "Usage: bash qwen25/scripts/llavabench.sh [base|memvr|evo] [num_gpus] [gpu_ids_csv|auto]"
+    echo "Usage: bash qwen35/scripts/llavabench.sh [base|memvr|evo] [num_gpus] [gpu_ids_csv|auto]"
     exit 1
 fi
 
@@ -58,9 +55,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
 
-dataset_root="../Datasets/llava-bench-in-the-wild"
-model_name="Qwen2.5-VL-7B-Instruct"
-model_path="../llms/Qwen2.5-VL-7B-Instruct"
+dataset_root="${LLAVABENCH_ROOT:-../Datasets/llava-bench-in-the-wild}"
+model_name="${MODEL_NAME:-Qwen3.5-VL}"
+model_path="${MODEL_PATH:-../llms/Qwen3.5-9B}"
 answers_file="$dataset_root/answers/$model_name/${method}.jsonl"
 reviews_dir="$dataset_root/reviews"
 review_output="$reviews_dir/${model_name}_${method}.review.jsonl"
@@ -97,7 +94,7 @@ mkdir -p "$(dirname "$answers_file")" "$reviews_dir"
 if [[ -s "$answers_file" ]]; then
     echo "[LLaVABench] found existing answers, skip generation: $answers_file"
 else
-    CUDA_VISIBLE_DEVICES="$selected_visible_gpus" python -m qwen25.qwen_eval \
+    CUDA_VISIBLE_DEVICES="$selected_visible_gpus" python -m qwen35.qwen_eval \
         --model-path "$model_path" \
         --question-file "$dataset_root/questions.jsonl" \
         --image-folder "$dataset_root/images" \
@@ -105,11 +102,16 @@ else
         --temperature 0 \
         --cuda-device 'cuda:0' \
         --method "$method" \
-        --retracing-ratio 0.28 \
-        --entropy-threshold 0.75 \
-        --max-new-tokens 1024 \
-        --starting-layer 9 \
-        --ending-layer 16
+        --retracing-ratio "${RETRACING_RATIO:-0.12}" \
+        --retrace-delay-layers "${RETRACE_DELAY_LAYERS:-1}" \
+        --retrace-target-layers "${RETRACE_TARGET_LAYERS:-}" \
+        --state-drift-threshold "${STATE_DRIFT_THRESHOLD:-0.5}" \
+        --state-drift-pooling "${STATE_DRIFT_POOLING:-mean}" \
+        --entropy-threshold "${ENTROPY_THRESHOLD:-0.75}" \
+        --max-new-tokens "${MAX_NEW_TOKENS:-512}" \
+        --starting-layer "${STARTING_LAYER:-8}" \
+        --ending-layer "${ENDING_LAYER:-10}" \
+        --disable-output-postprocess
 fi
 
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then

@@ -12,8 +12,8 @@ cd "$root_dir"
 #   nohup bash qwen35/scripts/mme_search.sh evo 5 12 > results/Qwen3.5-VL/mme/search/nohup.out 2>&1 &
 
 method="${1:-evo}"
-start_min="${2:-7}"
-start_max="${3:-15}"
+start_min="${2:-1}"
+start_max="${3:-4}"
 
 if [[ "$method" != "base" && "$method" != "memvr" && "$method" != "evo" ]]; then
     echo "Invalid method: $method"

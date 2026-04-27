@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -43,6 +44,20 @@ def get_model_device(model):
 
 def resolve_method(args):
     return args.method or "base"
+
+
+def should_collect_pca(args):
+    return bool(args.collect_pca and args.analysis_log_dir)
+
+
+def should_print_live_outputs(args):
+    return bool(args.print_live_output)
+
+
+def build_trace_sample_id(qid, prompt, image_name):
+    raw = f"{qid}\n{image_name}\n{prompt}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"{qid}__{digest}"
 
 
 def load_qwen_model(args):
@@ -157,24 +172,26 @@ def run_qa_eval(args, model_name, processor, model):
                         is_hallucinated = int(generated_answer_norm != ground_truth_norm)
 
                     analysis_metadata = {
-                        "sample_id": str(qid),
+                        "sample_id": build_trace_sample_id(qid, prompt, image_name),
                         "question_id": qid,
                         "dataset_name": args.dataset_name or args.task_type,
                         "model_name": model_name,
+                        "method": resolve_method(args),
                         "prompt": prompt,
                         "generated_answer": output,
                         "ground_truth_answer": ground_truth_answer,
                         "final_prediction_correct": final_prediction_correct,
                         "is_hallucinated": is_hallucinated,
                     }
-                    trace_qwen25_sample(
-                        model=model,
-                        processor=processor,
-                        inputs=inputs,
-                        generated_ids_trimmed=generated_tensor,
-                        metadata=analysis_metadata,
-                        analysis_log_dir=args.analysis_log_dir,
-                    )
+                    if should_collect_pca(args):
+                        trace_qwen25_sample(
+                            model=model,
+                            processor=processor,
+                            inputs=inputs,
+                            generated_ids_trimmed=generated_tensor,
+                            metadata=analysis_metadata,
+                            analysis_log_dir=args.analysis_log_dir,
+                        )
                 after_trigger_total = getattr(model.model.language_model, "_memvr_trigger_total", 0)
                 if after_trigger_total > before_trigger_total:
                     triggered_samples += 1
@@ -192,6 +209,13 @@ def run_qa_eval(args, model_name, processor, model):
                 )
                 + "\n"
             )
+            ans_file.flush()
+
+            if should_print_live_outputs(args):
+                preview = output.replace("\n", " ").strip()
+                if len(preview) > args.live_output_max_chars:
+                    preview = preview[: args.live_output_max_chars] + "..."
+                print(f"[LIVE OUTPUT] qid={qid} output={preview}", flush=True)
 
     if total_samples > 0:
         triggered_ratio = triggered_samples / total_samples
@@ -326,6 +350,9 @@ def build_parser():
     parser.add_argument("--chair-output-max-chars", type=int, default=240)
     parser.add_argument("--dataset-name", type=str, default="")
     parser.add_argument("--analysis-log-dir", type=str, default="")
+    parser.add_argument("--collect-pca", action="store_true")
+    parser.add_argument("--print-live-output", action="store_true")
+    parser.add_argument("--live-output-max-chars", type=int, default=240)
     return parser
 
 

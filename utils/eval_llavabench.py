@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--sleep-seconds", type=float, default=1.0, help="Retry sleep when request fails")
 	parser.add_argument("--max-retries", type=int, default=8)
 	parser.add_argument("--only-summary", action="store_true", help="Skip GPT review and summarize existing review file")
+	parser.add_argument(
+		"--overwrite-review",
+		action="store_true",
+		help="Overwrite review output and rerun GPT review from the first sample",
+	)
 	return parser.parse_args()
 
 
@@ -174,9 +179,21 @@ def run_review(args: argparse.Namespace) -> None:
 	review_path.parent.mkdir(parents=True, exist_ok=True)
 
 	existing = []
+	if args.overwrite_review and review_path.exists():
+		print(f"[review] overwrite enabled, remove existing file: {review_path}")
+		review_path.unlink()
+
 	if review_path.exists():
 		existing = load_jsonl(str(review_path))
 	start_idx = len(existing)
+	total = len(questions)
+
+	if start_idx > 0:
+		remaining = max(total - start_idx, 0)
+		print(f"[review] resume from {start_idx + 1}/{total} (existing={start_idx}, remaining={remaining})")
+	if start_idx >= total:
+		print("[review] no pending samples. Use --overwrite-review to rerun all samples.")
+		return
 
 	mode = "a" if review_path.exists() else "w"
 	with open(review_path, mode, encoding="utf-8") as wf:
@@ -223,7 +240,7 @@ def run_review(args: argparse.Namespace) -> None:
 			}
 			wf.write(json.dumps(row, ensure_ascii=False) + "\n")
 			wf.flush()
-			print(f"[review] {idx + 1}/{len(questions)} -> {s1:.2f}, {s2:.2f}")
+			print(f"[review] {idx + 1}/{total} -> {s1:.2f}, {s2:.2f}")
 
 
 def summarize_review(review_rows: List[dict]) -> Dict[str, Dict[str, float]]:

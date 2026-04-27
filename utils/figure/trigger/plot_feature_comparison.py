@@ -87,11 +87,13 @@ def main() -> None:
         ax.tick_params(axis="y", labelsize=13)
         ax.grid(axis="y", lw=2, linestyle="--", color="gray", alpha=0.35)
         ax.set_axisbelow(True)
-        ax.set_xlim(-0.6, len(model_names) - 0.4)
+        group_half_span = bar_width
+        side_padding = 0.06
+        ax.set_xlim(-group_half_span - side_padding, (len(model_names) - 1) + group_half_span + side_padding)
         ax.set_ylim(y_min, y_max)
 
-        if metric_idx == 0:
-            ax.set_ylabel("Time (s)", fontsize=16)
+        # if metric_idx == 0:
+        #     ax.set_ylabel("Time (s)", fontsize=16)
 
     fig.legend(
         loc="upper center",

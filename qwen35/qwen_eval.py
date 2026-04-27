@@ -41,6 +41,10 @@ def resolve_method(args):
     return args.method or "base"
 
 
+def should_print_live_outputs(args):
+    return bool(args.print_live_output)
+
+
 def apply_qwen_chat_template(processor, messages):
     template_kwargs = {
         "add_generation_prompt": True,
@@ -51,7 +55,7 @@ def apply_qwen_chat_template(processor, messages):
     try:
         return processor.apply_chat_template(
             messages,
-            enable_thinking=False,
+            enable_thinking=True,
             **template_kwargs,
         )
     except TypeError:
@@ -197,7 +201,10 @@ def run_qa_eval(args, model_name, processor, model):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
-                output = postprocess_qwen35_answer(raw_output)
+                if args.disable_output_postprocess:
+                    output = raw_output
+                else:
+                    output = postprocess_qwen35_answer(raw_output)
 
                 if args.analysis_log_dir:
                     generated_tensor = generated_ids_trimmed[0].unsqueeze(0)
@@ -252,6 +259,13 @@ def run_qa_eval(args, model_name, processor, model):
                 )
                 + "\n"
             )
+            ans_file.flush()
+
+            if should_print_live_outputs(args):
+                preview = output.replace("\n", " ").strip()
+                if len(preview) > args.live_output_max_chars:
+                    preview = preview[: args.live_output_max_chars] + "..."
+                print(f"[LIVE OUTPUT] qid={qid} output={preview}", flush=True)
 
     if total_samples > 0:
         triggered_ratio = triggered_samples / total_samples
@@ -371,6 +385,13 @@ def build_parser():
     parser.add_argument("--chair-max-samples", type=int, default=500)
     parser.add_argument("--dataset-name", type=str, default="")
     parser.add_argument("--analysis-log-dir", type=str, default="")
+    parser.add_argument(
+        "--disable-output-postprocess",
+        action="store_true",
+        help="Keep raw decoded text without qwen35-specific answer postprocessing.",
+    )
+    parser.add_argument("--print-live-output", action="store_true")
+    parser.add_argument("--live-output-max-chars", type=int, default=240)
     return parser
 
 

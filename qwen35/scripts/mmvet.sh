@@ -7,11 +7,10 @@ cd "$root_dir"
 export PYTHONPATH="$root_dir:${PYTHONPATH:-}"
 
 # Usage:
-#   bash qwen25/scripts/mmvet.sh
-#   bash qwen25/scripts/mmvet.sh base
-#   bash qwen25/scripts/mmvet.sh memvr 0
-#   bash qwen25/scripts/mmvet.sh evo 1
-#   bash qwen25/scripts/mmvet.sh evo auto
+#   bash qwen35/scripts/mmvet.sh
+#   bash qwen35/scripts/mmvet.sh base
+#   bash qwen35/scripts/mmvet.sh memvr 0
+#   bash qwen35/scripts/mmvet.sh evo auto
 method="${1:-base}"
 gpu_id="${2:-auto}"
 
@@ -70,7 +69,7 @@ PY
 
 if [[ "$method" != "base" && "$method" != "memvr" && "$method" != "evo" ]]; then
     echo "Invalid method: $method"
-    echo "Usage: bash qwen25/scripts/mmvet.sh [base|memvr|evo] [gpu_id]"
+    echo "Usage: bash qwen35/scripts/mmvet.sh [base|memvr|evo] [gpu_id]"
     exit 1
 fi
 
@@ -86,8 +85,8 @@ if [[ -z "$gpu_id" || "$gpu_id" == "auto" ]]; then
 fi
 
 mmvet_root_default="../Datasets/mm-vet"
-model_name_default="Qwen2.5-VL"
-model_path_default="../llms/Qwen2.5-VL-7B-Instruct"
+model_name_default="Qwen3.5"
+model_path_default="../llms/Qwen3.5-9B"
 
 entropy_threshold_default="0.3"
 starting_layer_default="5"
@@ -157,7 +156,7 @@ python "$root_dir/llava/scripts/prepare_mmvet_questions.py" \
     --src "$question_json" \
     --dst "$question_jsonl"
 
-CUDA_VISIBLE_DEVICES="$gpu_id" python -m qwen25.qwen_eval \
+CUDA_VISIBLE_DEVICES="$gpu_id" python -m qwen35.qwen_eval \
     --model-path "$model_path" \
     --question-file "$question_jsonl" \
     --image-folder "$image_folder" \
