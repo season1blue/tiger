@@ -1,5 +1,4 @@
 import argparse
-import csv
 import json
 from collections import OrderedDict
 from pathlib import Path
@@ -11,13 +10,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.patches import Ellipse
-from sklearn.decomposition import PCA
 
 
 METHOD_DISPLAY = OrderedDict(
     [
-        ("base", "Base"),
+        ("base", "Vanilla"),
         ("memvr", "MemVR"),
         ("evo", "Evo"),
     ]
@@ -203,148 +200,41 @@ def _load_method_artifact(method_dir: Path, method: str):
     }
 
 
-def _add_covariance_ellipse(ax, points: np.ndarray, color: str):
-    if points.shape[0] < 2:
-        return
-
-    cov = np.cov(points, rowvar=False)
-    if cov.shape != (2, 2) or not np.isfinite(cov).all():
-        return
-
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    order = eigvals.argsort()[::-1]
-    eigvals = eigvals[order]
-    eigvecs = eigvecs[:, order]
-    if np.any(eigvals <= 0):
-        return
-
-    angle = np.degrees(np.arctan2(*eigvecs[:, 0][::-1]))
-    width, height = 2.0 * np.sqrt(eigvals)
-    center = points.mean(axis=0)
-    ellipse = Ellipse(
-        xy=center,
-        width=width,
-        height=height,
-        angle=angle,
-        edgecolor=color,
-        facecolor="none",
-        linewidth=1.8,
-        alpha=0.95,
-    )
-    ax.add_patch(ellipse)
-
-
-def _write_projection_table(artifacts, projected, output_path: Path):
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "method",
-        "sample_id",
-        "question_id",
-        "pc1",
-        "pc2",
-        "mean_entropy",
-        "mean_text_image_similarity",
-        "mean_update_norm",
-        "mean_direction_shift",
-        "is_hallucinated",
-        "final_prediction_correct",
+def _cleanup_stale_scatter_outputs(output_dir: Path):
+    stale_names = [
+        "mme_pca_comparison.png",
+        "mme_pca_comparison_base_vs_memvr.png",
+        "mme_pca_comparison_base_vs_evo.png",
+        "mme_pca_comparison_base_vs_memvr.pdf",
+        "mme_pca_comparison_base_vs_evo.pdf",
+        "mme_pca_projection.csv",
     ]
-    with output_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        start = 0
-        for artifact in artifacts:
-            count = artifact["features"].shape[0]
-            coords = projected[start : start + count]
-            for idx in range(count):
-                writer.writerow(
-                    {
-                        "method": artifact["method"],
-                        "sample_id": artifact["sample_ids"][idx],
-                        "question_id": artifact["question_ids"][idx],
-                        "pc1": float(coords[idx, 0]),
-                        "pc2": float(coords[idx, 1]),
-                        "mean_entropy": float(artifact["mean_entropy"][idx]),
-                        "mean_text_image_similarity": float(artifact["mean_text_image_similarity"][idx]),
-                        "mean_update_norm": float(artifact["mean_update_norm"][idx]),
-                        "mean_direction_shift": float(artifact["mean_direction_shift"][idx]),
-                        "is_hallucinated": artifact["is_hallucinated"][idx],
-                        "final_prediction_correct": artifact["final_prediction_correct"][idx],
-                    }
-                )
-            start += count
-
-
-def _plot_embedding_comparison(artifacts, output_dir: Path):
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    all_features = np.concatenate([artifact["features"] for artifact in artifacts], axis=0)
-    pca = PCA(n_components=2, random_state=0)
-    projected = pca.fit_transform(all_features)
-    explained = pca.explained_variance_ratio_ * 100.0
-
-    plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(9.5, 7.5))
-
-    start = 0
-    for artifact in artifacts:
-        count = artifact["features"].shape[0]
-        points = projected[start : start + count]
-        start += count
-        method = artifact["method"]
-        color = METHOD_COLORS[method]
-        ax.scatter(
-            points[:, 0],
-            points[:, 1],
-            s=11,
-            alpha=0.28,
-            color=color,
-            label=f"{METHOD_DISPLAY[method]} (n={count})",
-            rasterized=True,
-        )
-        _add_covariance_ellipse(ax, points, color)
-
-    ax.set_title("MME Hidden-State PCA Comparison")
-    ax.set_xlabel(f"PC1 ({explained[0]:.1f}% var)")
-    ax.set_ylabel(f"PC2 ({explained[1]:.1f}% var)")
-    ax.legend(frameon=True)
-    fig.tight_layout()
-    fig.savefig(output_dir / "mme_pca_comparison.png", dpi=220, bbox_inches="tight")
-    plt.close(fig)
-
-    _write_projection_table(artifacts, projected, output_dir / "mme_pca_projection.csv")
+    for name in stale_names:
+        path = output_dir / name
+        if path.exists():
+            path.unlink()
 
 
 def _plot_summary_metrics(artifacts, output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    plt.rcParams.update(
-        {
-            "font.size": 15,
-            "axes.titlesize": 17,
-            "axes.labelsize": 15,
-            "xtick.labelsize": 14,
-            "ytick.labelsize": 14,
-        }
-    )
-
     metrics = [
-        ("mean_entropy", "Mean Entropy"),
-        ("mean_text_image_similarity", "Text-Image Similarity"),
-        ("mean_update_norm", "State Update Norm"),
-        ("mean_direction_shift", "Direction Shift"),
+        ("mean_entropy", "(a) Mean Entropy$\\downarrow$"),
+        ("mean_text_image_similarity", "(b) Text-Image Similarity$\\downarrow$"),
+        ("mean_update_norm", "(c) State Update$\\uparrow$"),
+        ("mean_direction_shift", "(d) Direction Shift$\\downarrow$"),
     ]
     methods = [artifact["method"] for artifact in artifacts]
     labels = [METHOD_DISPLAY[method] for method in methods]
     summary_method_colors = {
         "base": "#497fc0",
-        "memvr": "#29517c",
+        "memvr": "#9694e7",
         "evo": "#c9393e",
     }
     colors = [summary_method_colors.get(method, METHOD_COLORS.get(method, "#497fc0")) for method in methods]
     x_positions = np.arange(len(labels))
 
-    fig, axes = plt.subplots(1, 4, figsize=(14.8, 4.6))
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
     axes = axes.flatten()
 
     for ax, (metric_key, metric_title) in zip(axes, metrics):
@@ -362,9 +252,10 @@ def _plot_summary_metrics(artifacts, output_dir: Path):
             linewidth=0.8,
             zorder=3,
         )
-        ax.set_title(metric_title)
+        ax.set_title(metric_title, fontsize=17)
         ax.set_xticks(x_positions)
-        ax.set_xticklabels(labels, rotation=0)
+        ax.set_xticklabels(labels, rotation=0, fontsize=17)
+        ax.tick_params(axis="y", which="both", left=False, labelleft=False)
         for label in ax.get_xticklabels():
             if label.get_text() == "Evo":
                 label.set_color(summary_method_colors["evo"])
@@ -385,23 +276,31 @@ def _plot_summary_metrics(artifacts, output_dir: Path):
             label_offset = max(spread * 0.06, abs(data_max) * 0.01, 1e-6)
             for bar, value in zip(bars, values):
                 if np.isfinite(value):
+                    label_text = f"{value:.1f}" if metric_key == "mean_update_norm" else f"{value:.3f}"
                     ax.annotate(
-                        f"{value:.3f}",
+                        label_text,
                         xy=(bar.get_x() + bar.get_width() / 2, value),
                         xytext=(0, 4),
                         textcoords="offset points",
                         ha="center",
                         va="bottom",
-                        fontsize=14,
+                        fontsize=17,
                         clip_on=True,
                     )
-        ax.grid(axis="y", linestyle="--", alpha=0.82)
+        ax.grid(axis="x", linestyle="--", color="gray", alpha=0.82)
+        ax.grid(axis="y", linestyle="--", color="gray", alpha=0.7)
         ax.set_axisbelow(True)
+        for spine in ax.spines.values():
+            spine.set_color("black")
+            spine.set_linewidth(1.0)
 
-    fig.subplots_adjust(left=0.06, right=0.995, bottom=0.2, top=0.92, wspace=0.18)
-    fig.savefig(output_dir / "mme_pca_feature_summary.png", dpi=220, bbox_inches="tight")
+    fig.subplots_adjust(left=0.06, right=0.995, bottom=0.2, top=0.92, wspace=0.28)
     fig.savefig(output_dir / "mme_pca_feature_summary.pdf", bbox_inches="tight")
     plt.close(fig)
+
+    stale_summary_png = output_dir / "mme_pca_feature_summary.png"
+    if stale_summary_png.exists():
+        stale_summary_png.unlink()
 
 
 def build_and_plot(current_results_dir: Path, method: str, run_tag: str, layer_index: int):
@@ -426,15 +325,12 @@ def build_and_plot(current_results_dir: Path, method: str, run_tag: str, layer_i
         "current_method_summary": current_artifact["summary"],
     }
 
-    if len(artifacts) >= 2:
-        _plot_embedding_comparison(artifacts, comparison_dir)
+    if artifacts:
+        _cleanup_stale_scatter_outputs(comparison_dir)
         _plot_summary_metrics(artifacts, comparison_dir)
         overview["comparison_ready"] = True
         overview["comparison_files"] = [
-            str(comparison_dir / "mme_pca_comparison.png"),
-            str(comparison_dir / "mme_pca_feature_summary.png"),
             str(comparison_dir / "mme_pca_feature_summary.pdf"),
-            str(comparison_dir / "mme_pca_projection.csv"),
         ]
     else:
         overview["comparison_ready"] = False

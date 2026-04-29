@@ -77,14 +77,14 @@ def main() -> None:
                     f"{height:.0f}",
                     ha="center",
                     va="bottom",
-                    fontsize=12,
+                    fontsize=14,
                 )
 
         ax.set_title(metric_names[metric_idx], fontsize=17)
         ax.set_xticks(x)
         ax.set_xticklabels(model_names)
         ax.tick_params(axis="x", labelsize=13)
-        ax.tick_params(axis="y", labelsize=13)
+        ax.tick_params(axis="y", which="both", left=False, labelleft=False)
         ax.grid(axis="y", lw=2, linestyle="--", color="gray", alpha=0.7)
         ax.set_axisbelow(True)
         group_half_span = bar_width
@@ -97,10 +97,10 @@ def main() -> None:
 
     fig.legend(
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.99),
+        bbox_to_anchor=(0.5, 1.02),
         ncol=2,
         frameon=False,
-        fontsize=17,
+        fontsize=18,
     )
 
     plt.tight_layout(rect=(0, 0, 1, 0.92))
