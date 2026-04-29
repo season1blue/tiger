@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LEAD | Thinking in Uncertainty</title>
+  <meta name="description" content="LEAD: Latent Entropy-Aware Decoding for reliable multimodal reasoning and hallucination mitigation." />
+  <style>
+    :root {
+      --bg-dark: #040814;
+      --bg-mid: #0f1f6b;
+      --bg-warm: #d99d70;
+      --title: #f5b17c;
+      --text: #fff5e7;
+      --muted: rgba(255, 245, 231, 0.84);
+      --button-bg: #f5ebd6;
+      --button-border: #d8a83d;
+      --button-text: #141414;
+      --card-bg: #fbfbf8;
+      --line: #e7e5df;
+      --main-text: #1f2937;
+      --subtle: #6b7280;
+      --max: 1240px;
+      --shadow: 0 18px 40px rgba(6, 11, 32, 0.22);
+      --radius: 26px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--main-text);
+      background: #faf8f3;
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+
+    .container {
+      width: min(calc(100% - 40px), var(--max));
+      margin: 0 auto;
+    }
+
+    /* ===== Hero 区域 ===== */
+    .hero-wrap {
+      background:
+        radial-gradient(circle at 50% 60%, rgba(42, 63, 162, 0.45), transparent 34%),
+        linear-gradient(90deg, #000207 0%, #000610 18%, #07165a 48%, #182d82 62%, #72678c 82%, #c98f68 100%);
+      color: var(--text);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 0 6px;
+      font-size: 14px;
+    }
+
+    .site-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(6px);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.02fr 0.98fr;
+      gap: 48px;
+      align-items: center;
+      padding: 26px 0 56px;
+      min-height: 740px;
+    }
+
+    /* 标题行：LEAD 与右侧图片并排 */
+    .hero-title-row {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+
+    .hero-title-row .title-img {
+      width: clamp(120px, 18vw, 200px);
+      height: auto;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      object-fit: contain;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(56px, 8vw, 100px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      color: var(--title);
+      font-style: italic;
+      font-weight: 800;
+    }
+
+    .hero h2 {
+      margin: 8px 0 18px;
+      font-size: clamp(34px, 3.2vw, 58px);
+      line-height: 1.15;
+      color: var(--title);
+      font-weight: 800;
+    }
+
+    .hero-desc {
+      font-size: clamp(18px, 1.55vw, 22px);
+      color: var(--text);
+      margin: 0 0 24px;
+      max-width: 780px;
+    }
+
+    .feature-list {
+      display: grid;
+      gap: 20px;
+      margin-top: 26px;
+    }
+
+    .feature-item {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .feature-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      font-size: 22px;
+    }
+
+    .feature-item strong {
+      color: var(--text);
+      font-size: 18px;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 30px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 52px;
+      padding: 0 22px;
+      border-radius: 999px;
+      background: var(--button-bg);
+      border: 2px solid var(--button-border);
+      color: var(--button-text);
+      font-weight: 800;
+      font-size: 17px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.18);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px rgba(0,0,0,0.24);
+    }
+
+    .hero-visual {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .hero-visual img {
+      width: min(100%, 640px);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      object-fit: cover;
+    }
+
+    /* ===== Section 通用样式 ===== */
+    .section {
+      padding: 48px 0 0;
+    }
+
+    .section-inner {
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 36px 40px;
+      box-shadow: 0 16px 36px rgba(17, 24, 39, 0.06);
+    }
+
+    .section h3 {
+      margin: 0 0 16px;
+      font-size: clamp(26px, 2.8vw, 36px);
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .section h3::before {
+      content: "";
+      display: inline-block;
+      width: 5px;
+      height: 1.1em;
+      border-radius: 3px;
+      background: linear-gradient(180deg, var(--bg-mid), var(--bg-warm));
+      flex-shrink: 0;
+    }
+
+    .section p {
+      margin: 0;
+      color: #374151;
+      font-size: 16px;
+      line-height: 1.75;
+      max-width: 900px;
+    }
+
+    /* ===== 图片卡片样式 ===== */
+    .figure {
+      margin-top: 18px;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: white;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .figure:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px rgba(17, 24, 39, 0.10);
+    }
+
+    .figure img {
+      width: 100%;
+      display: block;
+      margin: 0 auto;
+    }
+
+    .figure-small {
+      max-width: 680px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .figure-small img {
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 12px 12px 0;
+    }
+
+    .figure-wide img {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px 16px 0;
+    }
+
+    .figure-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 18px;
+    }
+
+    .figure-grid .figure {
+      margin-top: 0;
+    }
+
+    .figure-grid .figure img {
+      width: 100%;
+      padding: 0;
+    }
+
+    .caption {
+      padding: 10px 18px 16px;
+      font-size: 13.5px;
+      color: var(--subtle);
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    /* ===== BibTeX 样式 ===== */
+    .bibtex {
+      margin-top: 18px;
+      padding: 20px 24px;
+      border-radius: 18px;
+      background: #101827;
+      color: #eef2ff;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .footer {
+      padding: 34px 0 60px;
+      color: #6b7280;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    /* ===== 响应式适配 ===== */
+    @media (max-width: 1100px) {
+      .hero {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        padding-top: 10px;
+        min-height: auto;
+      }
+
+      .hero-visual {
+        order: -1;
+      }
+
+      .hero-visual img {
+        width: 100%;
+        max-width: 520px;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .figure-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .container {
+        width: min(calc(100% - 24px), var(--max));
+      }
+
+      .hero {
+        padding-bottom: 34px;
+      }
+
+      .feature-item {
+        grid-template-columns: 34px 1fr;
+        font-size: 15px;
+      }
+
+      .feature-icon {
+        width: 34px;
+        height: 34px;
+        font-size: 18px;
+        border-radius: 10px;
+      }
+
+      .btn-row {
+        gap: 10px;
+      }
+
+      .btn {
+        width: calc(50% - 5px);
+        min-height: 48px;
+        padding: 0 14px;
+        font-size: 15px;
+      }
+
+      .section-inner {
+        padding: 20px 18px;
+      }
+
+      .figure-wide img,
+      .figure-small img {
+        padding: 8px 8px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="hero-wrap">
+    <div class="container">
+      <div class="topbar">
+        <div class="site-pill">&#x1F310; LEAD Project Page</div>
+      </div>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="hero-title-row">
+            <h1>LEAD</h1>
+            <img class="title-img" src="figure/lead-title.png" alt="LEAD" />
+          </div>
+          <h2>Latent Entropy-Aware Decoding for Reliable Multimodal Reasoning</h2>
+          <p class="hero-desc">
+            <strong>Thinking in Uncertainty: Mitigating Hallucinations in MLRMs with Latent Entropy-Aware Decoding.</strong>
+            LEAD 是一个即插即用的多模态推理解码策略：当模型进入高熵、不确定的推理阶段时，保留 token 分布中的潜在语义；当熵下降时，再切回离散 decoding 完成稳定收敛，并通过视觉锚点把推理重新拉回图像证据。
+          </p>
+
+          <div class="feature-list">
+            <div class="feature-item">
+              <div class="feature-icon">&#x1F50D;</div>
+              <div><strong>关键发现：</strong>转折词和过渡词经常对应高熵推理状态，而幻觉往往在这些节点之后更容易出现。</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">&#x1F9E0;</div>
+              <div><strong>熵感知切换：</strong>高熵阶段采用概率加权的连续 embedding 进行 latent reasoning，低熵阶段恢复离散 token decoding 以保证收敛性。</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">&#x1F5BC;&#xFE0F;</div>
+              <div><strong>视觉锚点注入：</strong>在高不确定推理的关键时刻注入视觉 anchor，减少脱离图像内容的"脑补式"推理。</div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon">&#x1F4C8;</div>
+              <div><strong>实验收益：</strong>LEAD 在幻觉评测、通用理解、数学与科学推理上都带来稳定增益，同时兼顾更短 reasoning length 与更高文本质量。</div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <a class="btn" href="#method">&#x2934; 方法</a>
+            <a class="btn" href="#findings">&#x1F4C4; 发现</a>
+            <a class="btn" href="#results">&#x25C9; 结果</a>
+            <a class="btn" href="#ablation">&#x1F310; 消融</a>
+            <a class="btn" href="#bibtex">&#x1F4DD; BibTeX</a>
+          </div>
+        </div>
+
+        <div class="hero-visual">
+          <img src="figure/intro2.png" alt="LEAD 中高熵与低熵推理阶段的示意图" />
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <main>
+    <!-- ===== 方法概览 ===== -->
+    <section class="section" id="method">
+      <div class="container">
+        <div class="section-inner">
+          <h3>方法概览</h3>
+          <p>LEAD 的核心思想是把 token-level entropy 当作推理不确定性的信号。当模型处于高熵状态时，单个采样 token 往往不足以表达真实的语义竞争关系，因此 LEAD 直接利用完整 token 分布构造概率加权 embedding，保留多个候选语义；当熵回落后，再切换回标准离散 decoding。与此同时，方法还会在关键的不确定阶段注入视觉锚点，强化视觉 grounding，减少幻觉传播。</p>
+          <div class="figure figure-wide">
+            <img src="figure/method.png" alt="LEAD 方法总览图" />
+            <div class="caption">LEAD 在高熵阶段执行 latent decoding，在低熵阶段恢复 discrete decoding；视觉与文本 token 在统一的多模态推理框架中共同驱动生成。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 关键观察 ===== -->
+    <section class="section" id="findings">
+      <div class="container">
+        <div class="section-inner">
+          <h3>关键观察与动机</h3>
+          <p>这篇工作首先从推理过程本身出发，分析幻觉出现的位置与不确定性的关系。一个直接发现是：在多模态大推理模型中，幻觉往往与 because、however、so、but 等转折或过渡节点共现。进一步的 token-level 分析显示，高熵 token 并不是可以忽略的噪声，它们反而是决定后续推理方向的关键节点；并且当这些高熵 token 与幻觉相关时，模型通常分配给视觉内容的注意力更少。</p>
+
+          <div class="figure-grid">
+            <div class="figure">
+              <img src="figure/intro1.png" alt="幻觉与过渡词相关性的统计图" />
+              <div class="caption">幻觉经常在 transition words 附近出现，说明高不确定推理节点与错误推断密切相关。</div>
+            </div>
+            <div class="figure">
+              <img src="figure/intro3.png" alt="高熵 token 的影响与视觉注意力分析" />
+              <div class="caption">高熵 token 对最终性能影响更大；与 hallucination 相关的高熵 token 通常具有更低的视觉注意力。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 定性可视化 ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-inner">
+          <h3>定性可视化分析</h3>
+          <p>LEAD 不仅改善最终答案，还改变了模型在推理过程中的行为模式。从可视化上看，方法能够在高熵阶段维持更丰富的 token 分布，并在关键时刻重新分配视觉注意力，从而避免模型在不确定阶段脱离图像内容继续"顺着语言惯性往下想"。</p>
+          <div class="figure figure-wide">
+            <img src="figure/example/visualization.png" alt="LEAD 的定性可视化分析" />
+            <div class="caption">LEAD 在 reasoning steps 中保持更稳定的视觉关注，同时在 latent reasoning 阶段保留更分散的 token 概率分布，体现出"探索—收敛"两阶段的动态切换。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 主要结果 ===== -->
+    <section class="section" id="results">
+      <div class="container">
+        <div class="section-inner">
+          <h3>主要结果</h3>
+          <p>实验结果表明，LEAD 不只是提升单一基准上的最终分数，而是在 sample efficiency、reasoning efficiency 与文本质量之间取得了更好的综合平衡。它能在更小的 k 下更快达到更高的 Pass@k 准确率，也能以更短的平均推理长度获得更高的正确率，并在 fluency、naturalness、grammar 与 perplexity 上维持或提升生成质量。</p>
+
+          <div class="figure-grid">
+            <div class="figure">
+              <img src="figure/Passk2.png" alt="LEAD 的 Pass@k 结果" />
+              <div class="caption">LEAD 的 Pass@k 曲线整体高于对比方法，更早达到高精度区间，体现更强的 sample efficiency。</div>
+            </div>
+            <div class="figure">
+              <img src="figure/Thinking%20efficiency2.png" alt="LEAD 的推理长度与准确率对比" />
+              <div class="caption">LEAD 以更短的平均 reasoning length 获得更高准确率，latent reasoning 提高了思考效率。</div>
+            </div>
+          </div>
+
+          <div class="figure figure-small">
+            <img src="figure/Fluency2.png" alt="LEAD 的文本质量评测" />
+            <div class="caption">LEAD 在 fluency、naturalness、grammar 以及 PPL 指标上保持稳定甚至更优，不以牺牲文本质量为代价换取准确率。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 消融研究 ===== -->
+    <section class="section" id="ablation">
+      <div class="container">
+        <div class="section-inner">
+          <h3>消融研究</h3>
+          <p>消融结果进一步验证了 LEAD 的设计选择。动态 entropy threshold 优于固定阈值策略，说明推理过程中需要根据不确定性自适应切换 reasoning mode；此外，discrete reasoning window 也并非越大越好，中等大小的 window 更能在语义探索与稳定收敛之间取得平衡。</p>
+
+          <div class="figure-grid">
+            <div class="figure">
+              <img src="figure/Ablation-mixed%20thinking2.png" alt="不同 entropy threshold 的消融结果" />
+              <div class="caption">动态阈值策略（Δ） consistently 优于固定阈值，自适应切换是 LEAD 成功的关键因素。</div>
+            </div>
+            <div class="figure">
+              <img src="figure/Ablation-window%20size2.png" alt="不同 window size 的消融结果" />
+              <div class="caption">中等 window size 性能最佳，过小影响稳定性，过大削弱 latent reasoning 的探索优势。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== BibTeX ===== -->
+    <section class="section" id="bibtex">
+      <div class="container">
+        <div class="section-inner">
+          <h3>BibTeX</h3>
+          <div class="bibtex">@inproceedings{xu2026lead,
+  title     = {Thinking in Uncertainty: Mitigating Hallucinations in MLRMs with Latent Entropy-Aware Decoding},
+  author    = {Zhongxing Xu and Zhonghua Wang and Zhe Qian and Dachuan Shi and Feilong Tang and Ming Hu and Shiyan Su and Xiaocheng Zou and Wei Feng and Dwarikanath Mahapatra and Yifan Peng and Mingquan Lin and Zongyuan Ge},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2026}
+}</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">LEAD Project Page &mdash; Latent Entropy-Aware Decoding for Reliable Multimodal Reasoning</div>
+  </footer>
+</body>
+</html>
