@@ -252,9 +252,9 @@ def _plot_summary_metrics(artifacts, output_dir: Path):
             linewidth=0.8,
             zorder=3,
         )
-        ax.set_title(metric_title, fontsize=17)
+        ax.set_title(metric_title, fontsize=14, fontweight="bold")
         ax.set_xticks(x_positions)
-        ax.set_xticklabels(labels, rotation=0, fontsize=17)
+        ax.set_xticklabels(labels, rotation=0, fontsize=13)
         ax.tick_params(axis="y", which="both", left=False, labelleft=False)
         for label in ax.get_xticklabels():
             if label.get_text() == "Evo":
@@ -284,7 +284,7 @@ def _plot_summary_metrics(artifacts, output_dir: Path):
                         textcoords="offset points",
                         ha="center",
                         va="bottom",
-                        fontsize=17,
+                        fontsize=13,
                         clip_on=True,
                     )
         ax.grid(axis="x", linestyle="--", color="gray", alpha=0.82)

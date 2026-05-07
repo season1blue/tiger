@@ -23,7 +23,7 @@ def _draw_triplet_block(
     x = np.arange(len(model_names))
     offsets = np.array([-bar_width / 2, bar_width / 2])
 
-    legend_handles = []
+    legend_handles = None
 
     for metric_idx, ax in enumerate(axes):
         metric_values = np.array(
@@ -33,7 +33,7 @@ def _draw_triplet_block(
             ]
         )
         y_min = max(0, float(metric_values.min()) * 0.97)
-        y_max = float(metric_values.max()) * 1.09
+        y_max = float(metric_values.max()) * 1.04
         label_offset = max((y_max - y_min) * 0.015, 5)
 
         for idx, name in enumerate(legend_names):
@@ -51,7 +51,7 @@ def _draw_triplet_block(
                     bar.set_hatch(hatch_patterns[idx])
 
             if metric_idx == 0:
-                legend_handles.append(bars[0])
+                legend_handles = bars
 
             for bar in bars:
                 h = bar.get_height()
@@ -61,13 +61,13 @@ def _draw_triplet_block(
                     f"{h:.0f}",
                     ha="center",
                     va="bottom",
-                    fontsize=15,
+                    fontsize=13,
                 )
 
         ax.set_title(metric_names[metric_idx], fontsize=17)
         ax.set_xticks(x)
         ax.set_xticklabels(model_names)
-        ax.tick_params(axis="x")
+        ax.tick_params(axis="x", labelsize=12)
         ax.tick_params(axis="y", which="both", left=False, labelleft=False)
         ax.grid(axis="y", lw=2, linestyle="--", color="gray", alpha=grid_alpha)
         ax.set_axisbelow(True)
@@ -77,9 +77,9 @@ def _draw_triplet_block(
         ax.set_xlim(-group_half_span - side_padding, (len(model_names) - 1) + group_half_span + side_padding)
         ax.set_ylim(y_min, y_max)
 
-    if len(legend_handles) == 2:
+    if legend_handles is not None:
         axes[1].legend(
-            handles=legend_handles,
+            handles=[legend_handles[0], legend_handles[1]],
             labels=legend_names,
             loc="upper center",
             bbox_to_anchor=(0.5, 1.24),
@@ -90,7 +90,7 @@ def _draw_triplet_block(
 
     axes[1].text(
         0.5,
-        1.22,
+        1.25,
         block_tag,
         transform=axes[1].transAxes,
         ha="center",
@@ -107,7 +107,7 @@ def main() -> None:
             "font.size": 15,
             "axes.titlesize": 19,
             "axes.labelsize": 19,
-            "xtick.labelsize": 16,
+            "xtick.labelsize": 17,
             "ytick.labelsize": 15,
         }
     )
@@ -162,7 +162,7 @@ def main() -> None:
         colors=colors,
         hatch_patterns=hatch_patterns,
         grid_alpha=0.35,
-        block_tag="(a) Revisited Feature",
+        block_tag="(a) Feature Trigger",
     )
 
     _draw_triplet_block(
